@@ -240,71 +240,94 @@ export default function LearningTracker() {
   const updateChallenge = async () => {
     if (!isAdmin || !editingChallenge) return;
 
-    const { error } = await supabase
+    console.log('Updating challenge:', editingChallenge);
+
+    const { data, error } = await supabase
       .from('daily_challenges')
       .update({
         title: editingChallenge.title,
         description: editingChallenge.description,
         category: editingChallenge.category
       })
-      .eq('id', editingChallenge.id);
+      .eq('id', editingChallenge.id)
+      .select();
 
     if (error) {
+      console.error('Update error:', error);
       alert('❌ Error updating challenge: ' + error.message);
     } else {
-      alert('✅ Challenge updated!');
+      console.log('Update success:', data);
+      // Update local state
+      const updatedChallenges = allChallenges.map(c => 
+        c.id === editingChallenge.id ? editingChallenge : c
+      );
+      setAllChallenges(updatedChallenges);
+      if (dailyChallenge?.id === editingChallenge.id) {
+        setDailyChallenge(editingChallenge);
+      }
+      
       setEditingChallenge(null);
-      loadDailyChallenge();
+      alert('✅ Challenge updated successfully!');
     }
   };
 
   const deleteChallenge = async (challengeId) => {
     if (!isAdmin) return;
-    if (!window.confirm('⚠️ Are you sure you want to delete this challenge? This will also delete all completions and submissions.')) return;
+    if (!window.confirm('⚠️ هل أنت متأكد من حذف هذا التحدي؟ سيتم حذف كل البيانات المرتبطة به.')) return;
+
+    console.log('Attempting to delete challenge:', challengeId);
 
     try {
-      // First, delete all completions for this challenge
+      // Step 1: Delete completions
+      console.log('Deleting completions...');
       const { error: completionsError } = await supabase
         .from('challenge_completions')
         .delete()
         .eq('challenge_id', challengeId);
 
       if (completionsError) {
-        console.error('Error deleting completions:', completionsError);
+        console.error('Completions delete error:', completionsError);
+        // Continue anyway
       }
 
-      // Then delete all submissions for this challenge
+      // Step 2: Delete submissions
+      console.log('Deleting submissions...');
       const { error: submissionsError } = await supabase
         .from('challenge_submissions')
         .delete()
         .eq('challenge_id', challengeId);
 
       if (submissionsError) {
-        console.error('Error deleting submissions:', submissionsError);
+        console.error('Submissions delete error:', submissionsError);
+        // Continue anyway
       }
 
-      // Finally, delete the challenge itself
-      const { error } = await supabase
+      // Step 3: Delete the challenge
+      console.log('Deleting challenge...');
+      const { data, error } = await supabase
         .from('daily_challenges')
         .delete()
-        .eq('id', challengeId);
+        .eq('id', challengeId)
+        .select();
+
+      console.log('Delete result:', { data, error });
 
       if (error) {
-        alert('❌ Error deleting challenge: ' + error.message);
-      } else {
-        // Remove from local state immediately
-        const updatedChallenges = allChallenges.filter(c => c.id !== challengeId);
-        setAllChallenges(updatedChallenges);
-        setDailyChallenge(updatedChallenges[0] || null);
-        setCompletedChallenge(false);
-        
-        alert('✅ Challenge and all related data deleted!');
-        
-        // Reload to ensure sync with database
-        setTimeout(() => loadDailyChallenge(), 500);
+        alert('❌ خطأ في الحذف: ' + error.message);
+        return;
       }
+
+      // Update local state
+      const updatedChallenges = allChallenges.filter(c => c.id !== challengeId);
+      setAllChallenges(updatedChallenges);
+      setDailyChallenge(updatedChallenges[0] || null);
+      setCompletedChallenge(false);
+      
+      alert('✅ تم الحذف بنجاح!');
+      
     } catch (err) {
-      alert('❌ Error: ' + err.message);
+      console.error('Delete exception:', err);
+      alert('❌ خطأ: ' + err.message);
     }
   };
 
