@@ -270,8 +270,15 @@ export default function LearningTracker() {
     if (error) {
       alert('❌ Error deleting challenge: ' + error.message);
     } else {
+      // Remove from local state immediately
+      const updatedChallenges = allChallenges.filter(c => c.id !== challengeId);
+      setAllChallenges(updatedChallenges);
+      setDailyChallenge(updatedChallenges[0] || null);
+      
       alert('✅ Challenge deleted!');
-      loadDailyChallenge();
+      
+      // Reload to ensure sync with database
+      setTimeout(() => loadDailyChallenge(), 500);
     }
   };
 
