@@ -260,25 +260,51 @@ export default function LearningTracker() {
 
   const deleteChallenge = async (challengeId) => {
     if (!isAdmin) return;
-    if (!window.confirm('⚠️ Are you sure you want to delete this challenge?')) return;
+    if (!window.confirm('⚠️ Are you sure you want to delete this challenge? This will also delete all completions and submissions.')) return;
 
-    const { error } = await supabase
-      .from('daily_challenges')
-      .delete()
-      .eq('id', challengeId);
+    try {
+      // First, delete all completions for this challenge
+      const { error: completionsError } = await supabase
+        .from('challenge_completions')
+        .delete()
+        .eq('challenge_id', challengeId);
 
-    if (error) {
-      alert('❌ Error deleting challenge: ' + error.message);
-    } else {
-      // Remove from local state immediately
-      const updatedChallenges = allChallenges.filter(c => c.id !== challengeId);
-      setAllChallenges(updatedChallenges);
-      setDailyChallenge(updatedChallenges[0] || null);
-      
-      alert('✅ Challenge deleted!');
-      
-      // Reload to ensure sync with database
-      setTimeout(() => loadDailyChallenge(), 500);
+      if (completionsError) {
+        console.error('Error deleting completions:', completionsError);
+      }
+
+      // Then delete all submissions for this challenge
+      const { error: submissionsError } = await supabase
+        .from('challenge_submissions')
+        .delete()
+        .eq('challenge_id', challengeId);
+
+      if (submissionsError) {
+        console.error('Error deleting submissions:', submissionsError);
+      }
+
+      // Finally, delete the challenge itself
+      const { error } = await supabase
+        .from('daily_challenges')
+        .delete()
+        .eq('id', challengeId);
+
+      if (error) {
+        alert('❌ Error deleting challenge: ' + error.message);
+      } else {
+        // Remove from local state immediately
+        const updatedChallenges = allChallenges.filter(c => c.id !== challengeId);
+        setAllChallenges(updatedChallenges);
+        setDailyChallenge(updatedChallenges[0] || null);
+        setCompletedChallenge(false);
+        
+        alert('✅ Challenge and all related data deleted!');
+        
+        // Reload to ensure sync with database
+        setTimeout(() => loadDailyChallenge(), 500);
+      }
+    } catch (err) {
+      alert('❌ Error: ' + err.message);
     }
   };
 
