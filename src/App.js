@@ -1,7 +1,6 @@
-
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Calendar, BookOpen, Code, Database, Lightbulb, Languages, FolderOpen, Download, BarChart3, TrendingUp, Target, CheckCircle2, Flame, Award, Zap, Clock, Star, LogIn, LogOut, User, Edit2 } from 'lucide-react';
+import { Calendar, BookOpen, Code, Database, Lightbulb, Languages, FolderOpen, Download, BarChart3, TrendingUp, Target, CheckCircle2, Flame, Award, Zap, Clock, Star, LogIn, LogOut, User, Edit2, Trophy, Play, FileText } from 'lucide-react';
 
 export default function LearningTracker() {
   const [user, setUser] = useState(null);
@@ -9,12 +8,16 @@ export default function LearningTracker() {
   const [entries, setEntries] = useState([]);
   const [currentEntry, setCurrentEntry] = useState({
     date: new Date().toISOString().split('T')[0],
-    article: { title: '', url: '', notes: '' },
-    pythonCode: '',
-    sqlCode: '',
-    wisdom: { text: '', source: '' },
+    categories: {
+      coding: { questions: [], notes: '' },
+      reading: { articles: [], books: [], notes: '' },
+      videos: { items: [], notes: '' },
+      projects: { items: [], notes: '' },
+      workflows: { items: [], notes: '' },
+      other: { items: [], notes: '' }
+    },
     englishWords: [],
-    miniProject: { name: '', progress: '', status: '' }
+    dailyReflection: ''
   });
   const [newWord, setNewWord] = useState({ word: '', meaning: '' });
   const [view, setView] = useState('entry');
@@ -22,6 +25,28 @@ export default function LearningTracker() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authMode, setAuthMode] = useState('login');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [userInterests, setUserInterests] = useState([]);
+  const [dailyChallenge, setDailyChallenge] = useState(null);
+  const [completedChallenge, setCompletedChallenge] = useState(false);
+  const [activeCategory, setActiveCategory] = useState('coding');
+  const [tempInterests, setTempInterests] = useState([]);
+  const [showCreateChallenge, setShowCreateChallenge] = useState(false);
+  const [newChallenge, setNewChallenge] = useState({
+    title: '',
+    description: '',
+    category: 'coding'
+  });
+  const [editingChallenge, setEditingChallenge] = useState(null);
+  const [allChallenges, setAllChallenges] = useState([]);
+  const [showAllChallenges, setShowAllChallenges] = useState(false);
+  const [challengeSubmission, setChallengeSubmission] = useState({ text: '', file: null });
+  const [showSubmissionForm, setShowSubmissionForm] = useState(false);
+  const [submissions, setSubmissions] = useState([]);
+
+  // Admin email that can create challenges
+  const ADMIN_EMAIL = 'yazanbrc@gmail.com';
+  const isAdmin = user?.email === ADMIN_EMAIL;
 
   // Check if user is logged in
   useEffect(() => {
@@ -37,10 +62,12 @@ export default function LearningTracker() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Load entries when user logs in
+  // Load data when user logs in
   useEffect(() => {
     if (user) {
       loadEntries();
+      loadUserProfile();
+      loadDailyChallenge();
     }
   }, [user]);
 
@@ -61,48 +88,215 @@ export default function LearningTracker() {
     if (error) {
       console.error('Error loading entries:', error);
     } else {
-      const formatted = data.map(entry => ({
-        date: entry.date,
-        article: entry.article || { title: '', url: '', notes: '' },
-        pythonCode: entry.python_code || '',
-        sqlCode: entry.sql_code || '',
-        wisdom: entry.wisdom || { text: '', source: '' },
-        englishWords: entry.english_words || [],
-        miniProject: entry.mini_project || { name: '', progress: '', status: '' }
-      }));
-      setEntries(formatted);
+      setEntries(data || []);
     }
   };
 
   const loadEntryForDate = async (date) => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('entries')
       .select('*')
       .eq('user_id', user.id)
       .eq('date', date)
       .single();
 
-    if (data) {
+    if (data && data.content) {
       setCurrentEntry({
         date: data.date,
-        article: data.article || { title: '', url: '', notes: '' },
-        pythonCode: data.python_code || '',
-        sqlCode: data.sql_code || '',
-        wisdom: data.wisdom || { text: '', source: '' },
-        englishWords: data.english_words || [],
-        miniProject: data.mini_project || { name: '', progress: '', status: '' }
+        categories: data.content.categories || currentEntry.categories,
+        englishWords: data.content.englishWords || [],
+        dailyReflection: data.content.dailyReflection || ''
       });
     } else {
-      // No entry for this date, reset form
       setCurrentEntry({
         date: date,
-        article: { title: '', url: '', notes: '' },
-        pythonCode: '',
-        sqlCode: '',
-        wisdom: { text: '', source: '' },
+        categories: {
+          coding: { questions: [], notes: '' },
+          reading: { articles: [], books: [], notes: '' },
+          videos: { items: [], notes: '' },
+          projects: { items: [], notes: '' },
+          workflows: { items: [], notes: '' },
+          other: { items: [], notes: '' }
+        },
         englishWords: [],
-        miniProject: { name: '', progress: '', status: '' }
+        dailyReflection: ''
       });
+    }
+  };
+
+  const loadUserProfile = async () => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('interests')
+      .eq('id', user.id)
+      .single();
+    
+    if (data && data.interests && data.interests.length > 0) {
+      setUserInterests(data.interests);
+    } else {
+      setShowOnboarding(true);
+    }
+  };
+
+  const loadDailyChallenge = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const { data } = await supabase
+      .from('daily_challenges')
+      .select('*')
+      .eq('date', today)
+      .order('created_at', { ascending: false });
+    
+    setAllChallenges(data || []);
+    setDailyChallenge(data?.[0] || null);
+
+    if (data?.[0]) {
+      const { data: completionData } = await supabase
+        .from('challenge_completions')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('challenge_id', data[0].id)
+        .single();
+      
+      setCompletedChallenge(!!completionData);
+    }
+
+    if (isAdmin) {
+      loadSubmissions();
+    }
+  };
+
+  const loadSubmissions = async () => {
+    const { data } = await supabase
+      .from('challenge_submissions')
+      .select('*, profiles(email)')
+      .order('submitted_at', { ascending: false });
+    
+    setSubmissions(data || []);
+  };
+
+  const saveInterests = async (interests) => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ interests: interests })
+      .eq('id', user.id);
+    
+    if (!error) {
+      setUserInterests(interests);
+      setShowOnboarding(false);
+    }
+  };
+
+  const markChallengeComplete = async () => {
+    if (!dailyChallenge) return;
+
+    const { error } = await supabase
+      .from('challenge_completions')
+      .insert({
+        user_id: user.id,
+        challenge_id: dailyChallenge.id,
+        completed_at: new Date().toISOString()
+      });
+
+    if (!error) {
+      setCompletedChallenge(true);
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    }
+  };
+
+  const createChallenge = async () => {
+    if (!isAdmin) {
+      alert('⛔ Only admin can create challenges');
+      return;
+    }
+
+    if (!newChallenge.title || !newChallenge.description) {
+      alert('❌ Please fill all fields');
+      return;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    
+    const { error } = await supabase
+      .from('daily_challenges')
+      .insert({
+        date: today,
+        title: newChallenge.title,
+        description: newChallenge.description,
+        category: newChallenge.category,
+        created_by: user.id
+      });
+
+    if (error) {
+      alert('❌ Error creating challenge: ' + error.message);
+    } else {
+      alert('✅ Challenge created successfully!');
+      setNewChallenge({ title: '', description: '', category: 'coding' });
+      setShowCreateChallenge(false);
+      loadDailyChallenge();
+    }
+  };
+
+  const updateChallenge = async () => {
+    if (!isAdmin || !editingChallenge) return;
+
+    const { error } = await supabase
+      .from('daily_challenges')
+      .update({
+        title: editingChallenge.title,
+        description: editingChallenge.description,
+        category: editingChallenge.category
+      })
+      .eq('id', editingChallenge.id);
+
+    if (error) {
+      alert('❌ Error updating challenge: ' + error.message);
+    } else {
+      alert('✅ Challenge updated!');
+      setEditingChallenge(null);
+      loadDailyChallenge();
+    }
+  };
+
+  const deleteChallenge = async (challengeId) => {
+    if (!isAdmin) return;
+    if (!confirm('⚠️ Are you sure you want to delete this challenge?')) return;
+
+    const { error } = await supabase
+      .from('daily_challenges')
+      .delete()
+      .eq('id', challengeId);
+
+    if (error) {
+      alert('❌ Error deleting challenge: ' + error.message);
+    } else {
+      alert('✅ Challenge deleted!');
+      loadDailyChallenge();
+    }
+  };
+
+  const submitChallengeWork = async () => {
+    if (!dailyChallenge || !challengeSubmission.text) {
+      alert('❌ Please write something about your work');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('challenge_submissions')
+      .insert({
+        user_id: user.id,
+        challenge_id: dailyChallenge.id,
+        submission_text: challengeSubmission.text,
+        submitted_at: new Date().toISOString()
+      });
+
+    if (error) {
+      alert('❌ Error submitting: ' + error.message);
+    } else {
+      alert('✅ Submitted successfully!');
+      setChallengeSubmission({ text: '', file: null });
+      setShowSubmissionForm(false);
+      markChallengeComplete();
     }
   };
 
@@ -143,12 +337,11 @@ export default function LearningTracker() {
     const entryData = {
       user_id: user.id,
       date: currentEntry.date,
-      article: currentEntry.article,
-      python_code: currentEntry.pythonCode,
-      sql_code: currentEntry.sqlCode,
-      wisdom: currentEntry.wisdom,
-      english_words: currentEntry.englishWords,
-      mini_project: currentEntry.miniProject,
+      content: {
+        categories: currentEntry.categories,
+        englishWords: currentEntry.englishWords,
+        dailyReflection: currentEntry.dailyReflection
+      },
       updated_at: new Date().toISOString()
     };
 
@@ -158,7 +351,7 @@ export default function LearningTracker() {
 
     if (error) {
       console.error('Error saving entry:', error);
-      alert('❌ Error saving entry: ' + error.message);
+      alert('❌ Error: ' + error.message);
     } else {
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -181,6 +374,47 @@ export default function LearningTracker() {
     setCurrentEntry({ ...currentEntry, englishWords: updated });
   };
 
+  const addCodingQuestion = () => {
+    const newQ = { question: '', code: '', explanation: '' };
+    const updated = { ...currentEntry };
+    updated.categories.coding.questions.push(newQ);
+    setCurrentEntry(updated);
+  };
+
+  const updateCodingQuestion = (index, field, value) => {
+    const updated = { ...currentEntry };
+    updated.categories.coding.questions[index][field] = value;
+    setCurrentEntry(updated);
+  };
+
+  const removeCodingQuestion = (index) => {
+    const updated = { ...currentEntry };
+    updated.categories.coding.questions.splice(index, 1);
+    setCurrentEntry(updated);
+  };
+
+  const addItem = (category, field) => {
+    const newItem = { title: '', url: '', notes: '' };
+    const updated = { ...currentEntry };
+    if (!updated.categories[category][field]) {
+      updated.categories[category][field] = [];
+    }
+    updated.categories[category][field].push(newItem);
+    setCurrentEntry(updated);
+  };
+
+  const updateItem = (category, field, index, key, value) => {
+    const updated = { ...currentEntry };
+    updated.categories[category][field][index][key] = value;
+    setCurrentEntry(updated);
+  };
+
+  const removeItem = (category, field, index) => {
+    const updated = { ...currentEntry };
+    updated.categories[category][field].splice(index, 1);
+    setCurrentEntry(updated);
+  };
+
   const editEntry = (date) => {
     setCurrentEntry({ ...currentEntry, date: date });
     setView('entry');
@@ -196,48 +430,9 @@ export default function LearningTracker() {
     link.click();
   };
 
-  const exportWeeklyReport = () => {
-    const today = new Date();
-    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const weekEntries = entries.filter(e => new Date(e.date) >= weekAgo);
-    
-    let report = `📊 WEEKLY LEARNING REPORT\n`;
-    report += `📅 ${weekAgo.toLocaleDateString()} - ${today.toLocaleDateString()}\n\n`;
-    report += `${'='.repeat(50)}\n\n`;
-    
-    weekEntries.forEach(entry => {
-      report += `📆 ${entry.date}\n`;
-      report += `\n📖 Article: ${entry.article.title || 'N/A'}\n`;
-      if (entry.article.url) report += `   ${entry.article.url}\n`;
-      report += `🐍 Python: ${entry.pythonCode ? '✅' : '⏭️'}\n`;
-      report += `🗄️ SQL: ${entry.sqlCode ? '✅' : '⏭️'}\n`;
-      report += `💡 Wisdom: ${entry.wisdom.text || 'N/A'}\n`;
-      report += `🔤 Words: ${entry.englishWords.length}\n`;
-      report += `🎯 Project: ${entry.miniProject.name || 'N/A'}\n\n`;
-      report += `${'-'.repeat(50)}\n\n`;
-    });
-    
-    report += `\n📊 STATISTICS:\n`;
-    report += `✅ Days: ${weekEntries.length}/7\n`;
-    report += `📚 Articles: ${weekEntries.filter(e => e.article.title).length}\n`;
-    report += `🐍 Python: ${weekEntries.filter(e => e.pythonCode).length}\n`;
-    report += `🗄️ SQL: ${weekEntries.filter(e => e.sqlCode).length}\n`;
-    report += `🔤 Words: ${weekEntries.reduce((sum, e) => sum + e.englishWords.length, 0)}\n`;
-    
-    const blob = new Blob([report], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `weekly-report-${today.toISOString().split('T')[0]}.txt`;
-    link.click();
-  };
-
   const getStats = () => {
     const total = entries.length;
-    const articlesRead = entries.filter(e => e.article.title).length;
-    const pythonDone = entries.filter(e => e.pythonCode).length;
-    const sqlDone = entries.filter(e => e.sqlCode).length;
-    const totalWords = entries.reduce((sum, e) => sum + e.englishWords.length, 0);
+    const totalWords = entries.reduce((sum, e) => sum + (e.content?.englishWords?.length || 0), 0);
     
     const sortedDates = entries.map(e => new Date(e.date)).sort((a, b) => b - a);
     let streak = 0;
@@ -259,7 +454,7 @@ export default function LearningTracker() {
       }
     }
     
-    return { total, articlesRead, pythonDone, sqlDone, totalWords, streak };
+    return { total, totalWords, streak };
   };
 
   // Login Screen
@@ -330,43 +525,114 @@ export default function LearningTracker() {
     );
   }
 
+  // Onboarding Screen
+  if (showOnboarding) {
+    const allInterests = [
+      { id: 'python', label: '🐍 Python' },
+      { id: 'sql', label: '🗄️ SQL' },
+      { id: 'javascript', label: '⚡ JavaScript' },
+      { id: 'data-analysis', label: '📊 Data Analysis' },
+      { id: 'machine-learning', label: '🤖 ML & AI' },
+      { id: 'english', label: '🔤 English' },
+      { id: 'articles', label: '📖 Articles' },
+      { id: 'books', label: '📚 Books' },
+      { id: 'projects', label: '🎯 Projects' },
+      { id: 'workflows', label: '⚙️ Workflows' },
+      { id: 'n8n', label: '🔗 n8n' },
+      { id: 'erp', label: '💼 ERP Systems' },
+      { id: 'bi', label: '📈 BI Tools' },
+      { id: 'videos', label: '🎥 Videos' },
+    ];
+
+    const toggleInterest = (id) => {
+      if (tempInterests.includes(id)) {
+        setTempInterests(tempInterests.filter(i => i !== id));
+      } else {
+        setTempInterests([...tempInterests, id]);
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 flex items-center justify-center p-4">
+        <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 max-w-3xl w-full shadow-2xl">
+          <div className="text-center mb-8">
+            <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-4 rounded-2xl inline-block mb-4">
+              <Target className="w-12 h-12 text-white" />
+            </div>
+            <h1 className="text-4xl font-black text-white mb-2">Welcome! 👋</h1>
+            <p className="text-gray-300 text-lg">What are you interested in learning?</p>
+            <p className="text-gray-400 text-sm mt-2">Select all that apply</p>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8">
+            {allInterests.map(interest => (
+              <button
+                key={interest.id}
+                onClick={() => toggleInterest(interest.id)}
+                className={`p-4 rounded-xl font-semibold transition-all ${
+                  tempInterests.includes(interest.id)
+                    ? 'bg-indigo-600 text-white scale-105 shadow-lg'
+                    : 'bg-white/5 text-gray-300 hover:bg-white/10'
+                }`}
+              >
+                {interest.label}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={() => saveInterests(tempInterests)}
+            disabled={tempInterests.length === 0}
+            className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 py-4 rounded-xl font-bold text-white text-lg disabled:opacity-50"
+          >
+            {tempInterests.length === 0 ? 'Select at least one' : `Continue (${tempInterests.length})`}
+          </button>
+
+          <button
+            onClick={() => setShowOnboarding(false)}
+            className="w-full mt-3 text-gray-400 hover:text-gray-300 text-sm"
+          >
+            Skip for now
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const stats = getStats();
 
   // Main App
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950">
       {showSuccess && (
-        <div className="fixed top-4 right-4 z-50 bg-gradient-to-r from-emerald-500 to-green-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-pulse">
+        <div className="fixed top-4 right-4 z-50 bg-gradient-to-r from-emerald-500 to-green-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3">
           <CheckCircle2 className="w-6 h-6" />
-          <span className="font-semibold">Saved to Cloud! ☁️</span>
+          <span className="font-semibold">Saved! ☁️</span>
         </div>
       )}
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         {/* Header */}
-        <div className="relative overflow-hidden bg-gradient-to-r from-indigo-600/20 via-purple-600/20 to-pink-600/20 backdrop-blur-xl border border-white/10 rounded-3xl p-8 mb-8 shadow-2xl">
+        <div className="bg-gradient-to-r from-indigo-600/20 via-purple-600/20 to-pink-600/20 backdrop-blur-xl border border-white/10 rounded-3xl p-6 mb-6 shadow-2xl">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
-              <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-4 rounded-2xl">
-                <Target className="w-10 h-10 text-white" />
+              <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-3 rounded-2xl">
+                <Target className="w-8 h-8 text-white" />
               </div>
               <div>
-                <h1 className="text-4xl font-black text-white">Daily Learning Tracker</h1>
-                <p className="text-indigo-200 flex items-center gap-2">
-                  <User className="w-4 h-4" />
-                  {user.email}
-                </p>
+                <h1 className="text-3xl font-black text-white">Learning Tracker</h1>
+                <p className="text-indigo-200 text-sm">{user.email}</p>
               </div>
             </div>
             
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
               {stats.streak > 0 && (
-                <div className="bg-gradient-to-br from-orange-500 to-red-600 px-6 py-4 rounded-2xl">
-                  <div className="flex items-center gap-3">
-                    <Flame className="w-8 h-8 text-white" />
+                <div className="bg-gradient-to-br from-orange-500 to-red-600 px-4 py-2 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <Flame className="w-6 h-6 text-white" />
                     <div className="text-white">
-                      <div className="text-3xl font-black">{stats.streak}</div>
-                      <div className="text-xs font-semibold">STREAK</div>
+                      <div className="text-2xl font-black">{stats.streak}</div>
+                      <div className="text-xs">STREAK</div>
                     </div>
                   </div>
                 </div>
@@ -374,191 +640,565 @@ export default function LearningTracker() {
               
               <button
                 onClick={handleLogout}
-                className="bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 px-4 py-2 rounded-xl flex items-center gap-2 text-white font-semibold transition-all"
+                className="bg-red-600/20 hover:bg-red-600/30 border border-red-500/30 px-4 py-2 rounded-xl flex items-center gap-2 text-white font-semibold"
               >
-                <LogOut className="w-5 h-5" />
+                <LogOut className="w-4 h-4" />
                 Logout
               </button>
             </div>
           </div>
         </div>
 
+        {/* Daily Challenge Banner */}
+        {isAdmin && (
+          <div className="mb-6">
+            <button
+              onClick={() => setShowCreateChallenge(!showCreateChallenge)}
+              className="w-full bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700 py-3 rounded-2xl font-bold text-white flex items-center justify-center gap-2"
+            >
+              <Trophy className="w-5 h-5" />
+              {showCreateChallenge ? 'Cancel' : '🎯 Create Today\'s Challenge (Admin)'}
+            </button>
+
+            {showCreateChallenge && (
+              <div className="bg-gradient-to-br from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6 mt-4">
+                <h3 className="text-xl font-bold text-white mb-4">Create New Challenge</h3>
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-300 mb-2">Category</label>
+                    <select
+                      value={newChallenge.category}
+                      onChange={(e) => setNewChallenge({ ...newChallenge, category: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                      style={{ color: 'white' }}
+                    >
+                      <option value="coding" style={{ backgroundColor: '#1e293b', color: 'white' }}>💻 Coding</option>
+                      <option value="reading" style={{ backgroundColor: '#1e293b', color: 'white' }}>📖 Reading</option>
+                      <option value="videos" style={{ backgroundColor: '#1e293b', color: 'white' }}>🎥 Videos</option>
+                      <option value="projects" style={{ backgroundColor: '#1e293b', color: 'white' }}>🎯 Projects</option>
+                      <option value="english" style={{ backgroundColor: '#1e293b', color: 'white' }}>🔤 English</option>
+                      <option value="general" style={{ backgroundColor: '#1e293b', color: 'white' }}>✨ General</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-300 mb-2">Challenge Title</label>
+                    <input
+                      type="text"
+                      value={newChallenge.title}
+                      onChange={(e) => setNewChallenge({ ...newChallenge, title: e.target.value })}
+                      placeholder="e.g., Learn 5 new SQL commands"
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-semibold text-gray-300 mb-2">Description</label>
+                    <textarea
+                      value={newChallenge.description}
+                      onChange={(e) => setNewChallenge({ ...newChallenge, description: e.target.value })}
+                      placeholder="Describe the challenge..."
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white h-24 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                    />
+                  </div>
+
+                  <button
+                    onClick={createChallenge}
+                    className="w-full bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 py-3 rounded-xl font-bold text-white"
+                  >
+                    ✅ Create Challenge
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* All Challenges for Today */}
+        {allChallenges.length > 0 && (
+          <div className="mb-6">
+            {isAdmin && allChallenges.length > 1 && (
+              <button
+                onClick={() => setShowAllChallenges(!showAllChallenges)}
+                className="mb-3 text-yellow-400 hover:text-yellow-300 text-sm font-semibold"
+              >
+                {showAllChallenges ? '▼' : '►'} {allChallenges.length} challenges for today
+              </button>
+            )}
+
+            {(showAllChallenges || allChallenges.length === 1) && allChallenges.map((challenge, idx) => (
+              <div key={challenge.id} className={`bg-gradient-to-r from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6 ${idx > 0 ? 'mt-4' : ''}`}>
+                {editingChallenge?.id === challenge.id ? (
+                  <div className="space-y-4">
+                    <h3 className="text-xl font-bold text-white mb-4">✏️ Editing Challenge</h3>
+                    <select
+                      value={editingChallenge.category}
+                      onChange={(e) => setEditingChallenge({ ...editingChallenge, category: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                      style={{ color: 'white' }}
+                    >
+                      <option value="coding" style={{ backgroundColor: '#1e293b', color: 'white' }}>💻 Coding</option>
+                      <option value="reading" style={{ backgroundColor: '#1e293b', color: 'white' }}>📖 Reading</option>
+                      <option value="videos" style={{ backgroundColor: '#1e293b', color: 'white' }}>🎥 Videos</option>
+                      <option value="projects" style={{ backgroundColor: '#1e293b', color: 'white' }}>🎯 Projects</option>
+                      <option value="english" style={{ backgroundColor: '#1e293b', color: 'white' }}>🔤 English</option>
+                      <option value="general" style={{ backgroundColor: '#1e293b', color: 'white' }}>✨ General</option>
+                    </select>
+                    <input
+                      type="text"
+                      value={editingChallenge.title}
+                      onChange={(e) => setEditingChallenge({ ...editingChallenge, title: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                    />
+                    <textarea
+                      value={editingChallenge.description}
+                      onChange={(e) => setEditingChallenge({ ...editingChallenge, description: e.target.value })}
+                      className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white h-24 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                    />
+                    <div className="flex gap-2">
+                      <button onClick={updateChallenge} className="flex-1 bg-green-600 hover:bg-green-700 px-4 py-2 rounded-xl font-bold text-white">💾 Save</button>
+                      <button onClick={() => setEditingChallenge(null)} className="flex-1 bg-gray-600 hover:bg-gray-700 px-4 py-2 rounded-xl font-bold text-white">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Trophy className="w-6 h-6 text-yellow-400" />
+                          <h3 className="text-xl font-bold text-white">Today's Challenge {allChallenges.length > 1 && `#${idx + 1}`}</h3>
+                          <span className="text-xs bg-yellow-600/40 px-2 py-1 rounded-full text-yellow-200">{challenge.category}</span>
+                        </div>
+                        <p className="text-lg text-gray-200 mb-2">{challenge.title}</p>
+                        <p className="text-sm text-gray-300">{challenge.description}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        {isAdmin && (
+                          <>
+                            <button
+                              onClick={() => setEditingChallenge(challenge)}
+                              className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl font-bold text-white text-sm"
+                            >
+                              ✏️ Edit
+                            </button>
+                            <button
+                              onClick={() => deleteChallenge(challenge.id)}
+                              className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-xl font-bold text-white text-sm"
+                            >
+                              🗑️
+                            </button>
+                          </>
+                        )}
+                        {!isAdmin && idx === 0 && (
+                          <button
+                            onClick={() => setShowSubmissionForm(!showSubmissionForm)}
+                            className="bg-yellow-600 hover:bg-yellow-700 px-6 py-3 rounded-xl font-bold text-white whitespace-nowrap"
+                          >
+                            📝 Submit Work
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {showSubmissionForm && idx === 0 && !isAdmin && (
+                      <div className="mt-4 bg-white/10 rounded-xl p-4">
+                        <h4 className="text-white font-bold mb-3">Submit Your Work</h4>
+                        <textarea
+                          value={challengeSubmission.text}
+                          onChange={(e) => setChallengeSubmission({ ...challengeSubmission, text: e.target.value })}
+                          placeholder="Describe what you did, share links, code, or notes..."
+                          className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white h-32 focus:outline-none focus:ring-2 focus:ring-yellow-500 mb-3"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={submitChallengeWork}
+                            className="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-xl font-bold text-white"
+                          >
+                            ✅ Submit
+                          </button>
+                          <button
+                            onClick={() => setShowSubmissionForm(false)}
+                            className="bg-gray-600 hover:bg-gray-700 px-6 py-2 rounded-xl font-bold text-white"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {dailyChallenge && !completedChallenge && (
+          <div className="bg-gradient-to-r from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6 mb-6">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <Trophy className="w-6 h-6 text-yellow-400" />
+                  <h3 className="text-xl font-bold text-white">Today's Challenge</h3>
+                  <span className="text-xs bg-yellow-600/40 px-2 py-1 rounded-full text-yellow-200">{dailyChallenge.category}</span>
+                </div>
+                <p className="text-lg text-gray-200 mb-2">{dailyChallenge.title}</p>
+                <p className="text-sm text-gray-300">{dailyChallenge.description}</p>
+              </div>
+              <button
+                onClick={markChallengeComplete}
+                className="bg-yellow-600 hover:bg-yellow-700 px-6 py-3 rounded-xl font-bold text-white whitespace-nowrap"
+              >
+                Mark Complete
+              </button>
+            </div>
+          </div>
+        )}
+
+        {completedChallenge && dailyChallenge && (
+          <div className="bg-gradient-to-r from-green-600/20 to-emerald-600/20 backdrop-blur-xl border border-green-500/30 rounded-2xl p-4 mb-6">
+            <div className="flex items-center gap-3 text-green-200">
+              <CheckCircle2 className="w-6 h-6" />
+              <span className="font-semibold">Challenge completed! 🎉</span>
+            </div>
+          </div>
+        )}
+
         {/* Navigation */}
-        <div className="flex gap-3 mb-8 overflow-x-auto pb-2">
-          <button
-            onClick={() => setView('entry')}
-            className={`group relative px-8 py-4 rounded-2xl font-bold transition-all flex items-center gap-3 ${
-              view === 'entry'
-                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-2xl shadow-indigo-500/50 scale-105'
-                : 'bg-white/5 backdrop-blur-sm border border-white/10 text-gray-300 hover:bg-white/10'
-            }`}
-          >
-            <BookOpen className="w-5 h-5" />
-            Today's Log
-          </button>
-          
-          <button
-            onClick={() => setView('history')}
-            className={`group relative px-8 py-4 rounded-2xl font-bold transition-all flex items-center gap-3 ${
-              view === 'history'
-                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-2xl shadow-indigo-500/50 scale-105'
-                : 'bg-white/5 backdrop-blur-sm border border-white/10 text-gray-300 hover:bg-white/10'
-            }`}
-          >
-            <Calendar className="w-5 h-5" />
-            History
-          </button>
-          
-          <button
-            onClick={() => setView('stats')}
-            className={`group relative px-8 py-4 rounded-2xl font-bold transition-all flex items-center gap-3 ${
-              view === 'stats'
-                ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-2xl shadow-indigo-500/50 scale-105'
-                : 'bg-white/5 backdrop-blur-sm border border-white/10 text-gray-300 hover:bg-white/10'
-            }`}
-          >
-            <BarChart3 className="w-5 h-5" />
-            Analytics
-          </button>
+        <div className="flex gap-3 mb-6 overflow-x-auto pb-2">
+          {[
+            { id: 'entry', icon: BookOpen, label: 'Today' },
+            { id: 'history', icon: Calendar, label: 'History' },
+            { id: 'stats', icon: BarChart3, label: 'Stats' },
+            ...(isAdmin ? [{ id: 'submissions', icon: FileText, label: '📬 Submissions' }] : [])
+          ].map(nav => (
+            <button
+              key={nav.id}
+              onClick={() => setView(nav.id)}
+              className={`px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 ${
+                view === nav.id
+                  ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg scale-105'
+                  : 'bg-white/5 text-gray-300 hover:bg-white/10'
+              }`}
+            >
+              <nav.icon className="w-5 h-5" />
+              {nav.label}
+            </button>
+          ))}
         </div>
 
         {/* Entry View */}
         {view === 'entry' && (
           <div className="space-y-6">
             {/* Date Selector */}
-            <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl">
-              <label className="block text-sm font-bold text-indigo-300 mb-3 flex items-center gap-2 uppercase tracking-wide">
-                <Calendar className="w-4 h-4" />
-                Date (Select any date to edit)
-              </label>
+            <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4">
+              <label className="block text-sm font-bold text-indigo-300 mb-2">Date</label>
               <input
                 type="date"
                 value={currentEntry.date}
                 onChange={(e) => setCurrentEntry({ ...currentEntry, date: e.target.value })}
-                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
 
-            {/* Article Section */}
-            <div className="bg-gradient-to-br from-blue-500/10 to-cyan-500/10 backdrop-blur-xl border border-blue-500/20 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-2xl font-black mb-5 flex items-center gap-3 text-white">
-                <div className="bg-gradient-to-br from-blue-500 to-cyan-600 p-2 rounded-xl">
-                  <BookOpen className="w-6 h-6" />
-                </div>
-                Article of the Day
-              </h3>
-              <div className="space-y-4">
-                <input
-                  type="text"
-                  placeholder="Article title..."
-                  value={currentEntry.article.title}
-                  onChange={(e) => setCurrentEntry({
-                    ...currentEntry,
-                    article: { ...currentEntry.article, title: e.target.value }
-                  })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                />
-                <input
-                  type="url"
-                  placeholder="https://..."
-                  value={currentEntry.article.url}
-                  onChange={(e) => setCurrentEntry({
-                    ...currentEntry,
-                    article: { ...currentEntry.article, url: e.target.value }
-                  })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                />
-                <textarea
-                  placeholder="Key takeaways and notes..."
-                  value={currentEntry.article.notes}
-                  onChange={(e) => setCurrentEntry({
-                    ...currentEntry,
-                    article: { ...currentEntry.article, notes: e.target.value }
-                  })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all h-28 resize-none"
-                />
-              </div>
+            {/* Category Tabs */}
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              {[
+                { id: 'coding', label: '💻 Coding', icon: Code },
+                { id: 'reading', label: '📖 Reading', icon: BookOpen },
+                { id: 'videos', label: '🎥 Videos', icon: Play },
+                { id: 'projects', label: '🎯 Projects', icon: Target },
+                { id: 'workflows', label: '⚙️ Workflows', icon: Database },
+                { id: 'other', label: '📝 Other', icon: FileText }
+              ].map(cat => (
+                <button
+                  key={cat.id}
+                  onClick={() => setActiveCategory(cat.id)}
+                  className={`px-4 py-2 rounded-xl font-semibold whitespace-nowrap transition-all ${
+                    activeCategory === cat.id
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-white/5 text-gray-300 hover:bg-white/10'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              ))}
             </div>
 
-            {/* Python Code Section */}
-            <div className="bg-gradient-to-br from-emerald-500/10 to-green-500/10 backdrop-blur-xl border border-emerald-500/20 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-2xl font-black mb-5 flex items-center gap-3 text-white">
-                <div className="bg-gradient-to-br from-emerald-500 to-green-600 p-2 rounded-xl">
+            {/* Coding Category */}
+            {activeCategory === 'coding' && (
+              <div className="bg-gradient-to-br from-emerald-500/10 to-green-500/10 backdrop-blur-xl border border-emerald-500/20 rounded-2xl p-6">
+                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
                   <Code className="w-6 h-6" />
-                </div>
-                Python Code
-              </h3>
-              <textarea
-                placeholder="# Write your Python code here..."
-                value={currentEntry.pythonCode}
-                onChange={(e) => setCurrentEntry({ ...currentEntry, pythonCode: e.target.value })}
-                className="w-full bg-slate-950/50 border border-emerald-500/30 rounded-xl px-4 py-3 text-emerald-400 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all h-40 resize-none font-mono text-sm"
-              />
-            </div>
+                  Coding Practice
+                </h3>
+                
+                {currentEntry.categories.coding.questions.map((q, i) => (
+                  <div key={i} className="bg-white/5 rounded-xl p-4 mb-4 border border-white/10">
+                    <div className="flex justify-between items-start mb-3">
+                      <span className="text-emerald-300 font-bold">Question #{i + 1}</span>
+                      <button
+                        onClick={() => removeCodingQuestion(i)}
+                        className="text-red-400 hover:text-red-300 text-xl"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <input
+                      placeholder="Question or problem..."
+                      value={q.question}
+                      onChange={(e) => updateCodingQuestion(i, 'question', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-3 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <textarea
+                      placeholder="// Your code solution..."
+                      value={q.code}
+                      onChange={(e) => updateCodingQuestion(i, 'code', e.target.value)}
+                      className="w-full bg-slate-950/50 border border-emerald-500/30 rounded-lg px-3 py-2 text-emerald-400 font-mono text-sm mb-3 h-32 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <textarea
+                      placeholder="Explanation or notes..."
+                      value={q.explanation}
+                      onChange={(e) => updateCodingQuestion(i, 'explanation', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white h-20 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                  </div>
+                ))}
 
-            {/* SQL Code Section */}
-            <div className="bg-gradient-to-br from-orange-500/10 to-amber-500/10 backdrop-blur-xl border border-orange-500/20 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-2xl font-black mb-5 flex items-center gap-3 text-white">
-                <div className="bg-gradient-to-br from-orange-500 to-amber-600 p-2 rounded-xl">
-                  <Database className="w-6 h-6" />
-                </div>
-                SQL Queries
-              </h3>
-              <textarea
-                placeholder="-- Write your SQL queries here..."
-                value={currentEntry.sqlCode}
-                onChange={(e) => setCurrentEntry({ ...currentEntry, sqlCode: e.target.value })}
-                className="w-full bg-slate-950/50 border border-orange-500/30 rounded-xl px-4 py-3 text-orange-400 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all h-40 resize-none font-mono text-sm"
-              />
-            </div>
+                <button
+                  onClick={addCodingQuestion}
+                  className="w-full bg-emerald-600/20 hover:bg-emerald-600/30 border-2 border-dashed border-emerald-500/50 rounded-xl py-3 text-emerald-300 font-semibold"
+                >
+                  + Add Question
+                </button>
 
-            {/* Wisdom Section */}
-            <div className="bg-gradient-to-br from-yellow-500/10 to-amber-500/10 backdrop-blur-xl border border-yellow-500/20 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-2xl font-black mb-5 flex items-center gap-3 text-white">
-                <div className="bg-gradient-to-br from-yellow-500 to-amber-600 p-2 rounded-xl">
-                  <Lightbulb className="w-6 h-6" />
-                </div>
-                Daily Wisdom
-              </h3>
-              <div className="space-y-4">
                 <textarea
-                  placeholder="Quote, lesson, or insight..."
-                  value={currentEntry.wisdom.text}
-                  onChange={(e) => setCurrentEntry({
-                    ...currentEntry,
-                    wisdom: { ...currentEntry.wisdom, text: e.target.value }
-                  })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-yellow-500 transition-all h-24 resize-none"
-                />
-                <input
-                  type="text"
-                  placeholder="Source (book, person, etc.)"
-                  value={currentEntry.wisdom.source}
-                  onChange={(e) => setCurrentEntry({
-                    ...currentEntry,
-                    wisdom: { ...currentEntry.wisdom, source: e.target.value }
-                  })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-yellow-500 transition-all"
+                  placeholder="General notes about today's coding..."
+                  value={currentEntry.categories.coding.notes}
+                  onChange={(e) => {
+                    const updated = { ...currentEntry };
+                    updated.categories.coding.notes = e.target.value;
+                    setCurrentEntry(updated);
+                  }}
+                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white mt-4 h-24 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
-            </div>
+            )}
 
-            {/* English Words Section */}
-            <div className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 backdrop-blur-xl border border-purple-500/20 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-2xl font-black mb-5 flex items-center gap-3 text-white">
-                <div className="bg-gradient-to-br from-purple-500 to-pink-600 p-2 rounded-xl">
-                  <Languages className="w-6 h-6" />
+            {/* Reading Category */}
+            {activeCategory === 'reading' && (
+              <div className="bg-gradient-to-br from-blue-500/10 to-cyan-500/10 backdrop-blur-xl border border-blue-500/20 rounded-2xl p-6">
+                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
+                  <BookOpen className="w-6 h-6" />
+                  Reading & Articles
+                </h3>
+                
+                <div className="mb-6">
+                  <h4 className="text-lg font-bold text-blue-300 mb-3">📰 Articles</h4>
+                  {currentEntry.categories.reading.articles?.map((item, i) => (
+                    <div key={i} className="bg-white/5 rounded-xl p-4 mb-3 border border-white/10">
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-blue-300 font-semibold text-sm">Article #{i + 1}</span>
+                        <button onClick={() => removeItem('reading', 'articles', i)} className="text-red-400 hover:text-red-300 text-xl">×</button>
+                      </div>
+                      <input
+                        placeholder="Article title..."
+                        value={item.title}
+                        onChange={(e) => updateItem('reading', 'articles', i, 'title', e.target.value)}
+                        className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <input
+                        placeholder="URL..."
+                        value={item.url}
+                        onChange={(e) => updateItem('reading', 'articles', i, 'url', e.target.value)}
+                        className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <textarea
+                        placeholder="Key takeaways..."
+                        value={item.notes}
+                        onChange={(e) => updateItem('reading', 'articles', i, 'notes', e.target.value)}
+                        className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white h-20 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  ))}
+                  <button onClick={() => addItem('reading', 'articles')} className="w-full bg-blue-600/20 hover:bg-blue-600/30 border-2 border-dashed border-blue-500/50 rounded-xl py-2 text-blue-300 font-semibold">+ Add Article</button>
                 </div>
+
+                <div>
+                  <h4 className="text-lg font-bold text-blue-300 mb-3">📚 Books</h4>
+                  {currentEntry.categories.reading.books?.map((item, i) => (
+                    <div key={i} className="bg-white/5 rounded-xl p-4 mb-3 border border-white/10">
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-blue-300 font-semibold text-sm">Book #{i + 1}</span>
+                        <button onClick={() => removeItem('reading', 'books', i)} className="text-red-400 hover:text-red-300 text-xl">×</button>
+                      </div>
+                      <input
+                        placeholder="Book title & chapter..."
+                        value={item.title}
+                        onChange={(e) => updateItem('reading', 'books', i, 'title', e.target.value)}
+                        className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <textarea
+                        placeholder="Notes & insights..."
+                        value={item.notes}
+                        onChange={(e) => updateItem('reading', 'books', i, 'notes', e.target.value)}
+                        className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white h-20 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                  ))}
+                  <button onClick={() => addItem('reading', 'books')} className="w-full bg-blue-600/20 hover:bg-blue-600/30 border-2 border-dashed border-blue-500/50 rounded-xl py-2 text-blue-300 font-semibold">+ Add Book</button>
+                </div>
+              </div>
+            )}
+
+            {/* Videos Category */}
+            {activeCategory === 'videos' && (
+              <div className="bg-gradient-to-br from-red-500/10 to-pink-500/10 backdrop-blur-xl border border-red-500/20 rounded-2xl p-6">
+                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
+                  <Play className="w-6 h-6" />
+                  Video Courses & Tutorials
+                </h3>
+                
+                {currentEntry.categories.videos.items?.map((item, i) => (
+                  <div key={i} className="bg-white/5 rounded-xl p-4 mb-3 border border-white/10">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-red-300 font-semibold text-sm">Video #{i + 1}</span>
+                      <button onClick={() => removeItem('videos', 'items', i)} className="text-red-400 hover:text-red-300 text-xl">×</button>
+                    </div>
+                    <input
+                      placeholder="Video/Course title..."
+                      value={item.title}
+                      onChange={(e) => updateItem('videos', 'items', i, 'title', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <input
+                      placeholder="URL..."
+                      value={item.url}
+                      onChange={(e) => updateItem('videos', 'items', i, 'url', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-2 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                    <textarea
+                      placeholder="What did you learn..."
+                      value={item.notes}
+                      onChange={(e) => updateItem('videos', 'items', i, 'notes', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white h-20 focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                  </div>
+                ))}
+                <button onClick={() => addItem('videos', 'items')} className="w-full bg-red-600/20 hover:bg-red-600/30 border-2 border-dashed border-red-500/50 rounded-xl py-2 text-red-300 font-semibold">+ Add Video</button>
+              </div>
+            )}
+
+            {/* Projects Category */}
+            {activeCategory === 'projects' && (
+              <div className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 backdrop-blur-xl border border-purple-500/20 rounded-2xl p-6">
+                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
+                  <Target className="w-6 h-6" />
+                  Projects & Practice
+                </h3>
+                
+                {currentEntry.categories.projects.items?.map((item, i) => (
+                  <div key={i} className="bg-white/5 rounded-xl p-4 mb-3 border border-white/10">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-purple-300 font-semibold text-sm">Project #{i + 1}</span>
+                      <button onClick={() => removeItem('projects', 'items', i)} className="text-red-400 hover:text-red-300 text-xl">×</button>
+                    </div>
+                    <input
+                      placeholder="Project name..."
+                      value={item.title}
+                      onChange={(e) => updateItem('projects', 'items', i, 'title', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                    <textarea
+                      placeholder="Today's progress..."
+                      value={item.notes}
+                      onChange={(e) => updateItem('projects', 'items', i, 'notes', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white h-24 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+                ))}
+                <button onClick={() => addItem('projects', 'items')} className="w-full bg-purple-600/20 hover:bg-purple-600/30 border-2 border-dashed border-purple-500/50 rounded-xl py-2 text-purple-300 font-semibold">+ Add Project</button>
+              </div>
+            )}
+
+            {/* Workflows Category */}
+            {activeCategory === 'workflows' && (
+              <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 backdrop-blur-xl border border-amber-500/20 rounded-2xl p-6">
+                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
+                  <Database className="w-6 h-6" />
+                  Workflows & Automation
+                </h3>
+                
+                {currentEntry.categories.workflows.items?.map((item, i) => (
+                  <div key={i} className="bg-white/5 rounded-xl p-4 mb-3 border border-white/10">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-amber-300 font-semibold text-sm">Workflow #{i + 1}</span>
+                      <button onClick={() => removeItem('workflows', 'items', i)} className="text-red-400 hover:text-red-300 text-xl">×</button>
+                    </div>
+                    <input
+                      placeholder="Workflow/automation name (n8n, ERP, etc)..."
+                      value={item.title}
+                      onChange={(e) => updateItem('workflows', 'items', i, 'title', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-2 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                    <textarea
+                      placeholder="What you learned or built..."
+                      value={item.notes}
+                      onChange={(e) => updateItem('workflows', 'items', i, 'notes', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white h-24 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+                ))}
+                <button onClick={() => addItem('workflows', 'items')} className="w-full bg-amber-600/20 hover:bg-amber-600/30 border-2 border-dashed border-amber-500/50 rounded-xl py-2 text-amber-300 font-semibold">+ Add Workflow</button>
+              </div>
+            )}
+
+            {/* Other Category */}
+            {activeCategory === 'other' && (
+              <div className="bg-gradient-to-br from-slate-500/10 to-gray-500/10 backdrop-blur-xl border border-slate-500/20 rounded-2xl p-6">
+                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
+                  <FileText className="w-6 h-6" />
+                  Other Learning
+                </h3>
+                
+                {currentEntry.categories.other.items?.map((item, i) => (
+                  <div key={i} className="bg-white/5 rounded-xl p-4 mb-3 border border-white/10">
+                    <div className="flex justify-between items-start mb-2">
+                      <span className="text-slate-300 font-semibold text-sm">Item #{i + 1}</span>
+                      <button onClick={() => removeItem('other', 'items', i)} className="text-red-400 hover:text-red-300 text-xl">×</button>
+                    </div>
+                    <input
+                      placeholder="Title..."
+                      value={item.title}
+                      onChange={(e) => updateItem('other', 'items', i, 'title', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-2 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                    />
+                    <textarea
+                      placeholder="Notes..."
+                      value={item.notes}
+                      onChange={(e) => updateItem('other', 'items', i, 'notes', e.target.value)}
+                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white h-20 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                    />
+                  </div>
+                ))}
+                <button onClick={() => addItem('other', 'items')} className="w-full bg-slate-600/20 hover:bg-slate-600/30 border-2 border-dashed border-slate-500/50 rounded-xl py-2 text-slate-300 font-semibold">+ Add Item</button>
+              </div>
+            )}
+
+            {/* English Words (Always visible) */}
+            <div className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 backdrop-blur-xl border border-indigo-500/20 rounded-2xl p-6">
+              <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
+                <Languages className="w-6 h-6" />
                 English Vocabulary
               </h3>
-              <div className="flex gap-3 mb-5">
+              <div className="flex gap-2 mb-4">
                 <input
                   type="text"
                   placeholder="Word"
                   value={newWord.word}
                   onChange={(e) => setNewWord({ ...newWord, word: e.target.value })}
                   onKeyPress={(e) => e.key === 'Enter' && addWord()}
-                  className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all"
+                  className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
                 <input
                   type="text"
@@ -566,180 +1206,84 @@ export default function LearningTracker() {
                   value={newWord.meaning}
                   onChange={(e) => setNewWord({ ...newWord, meaning: e.target.value })}
                   onKeyPress={(e) => e.key === 'Enter' && addWord()}
-                  className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all"
+                  className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-                <button
-                  onClick={addWord}
-                  className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 px-8 py-3 rounded-xl font-bold transition-all shadow-lg hover:shadow-xl"
-                >
-                  Add
-                </button>
+                <button onClick={addWord} className="bg-indigo-600 hover:bg-indigo-700 px-6 py-3 rounded-xl font-bold">Add</button>
               </div>
               <div className="space-y-2">
                 {currentEntry.englishWords.map((word, i) => (
-                  <div key={i} className="flex items-center justify-between bg-white/10 backdrop-blur-sm p-4 rounded-xl border border-white/10 group hover:bg-white/15 transition-all">
-                    <div className="flex items-center gap-4">
-                      <Star className="w-5 h-5 text-purple-400" />
-                      <div>
-                        <span className="font-bold text-purple-300 text-lg">{word.word}</span>
-                        <span className="text-gray-400 mx-3">→</span>
-                        <span className="text-gray-200">{word.meaning}</span>
-                      </div>
+                  <div key={i} className="flex items-center justify-between bg-white/10 p-3 rounded-xl group hover:bg-white/15">
+                    <div className="flex items-center gap-3">
+                      <Star className="w-4 h-4 text-indigo-400" />
+                      <span className="font-bold text-indigo-300">{word.word}</span>
+                      <span className="text-gray-400">→</span>
+                      <span className="text-gray-200">{word.meaning}</span>
                     </div>
-                    <button
-                      onClick={() => removeWord(i)}
-                      className="text-red-400 hover:text-red-300 font-bold opacity-0 group-hover:opacity-100 transition-all text-xl px-3"
-                    >
-                      ×
-                    </button>
+                    <button onClick={() => removeWord(i)} className="text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 text-xl">×</button>
                   </div>
                 ))}
               </div>
             </div>
 
-            {/* Mini Project Section */}
-            <div className="bg-gradient-to-br from-rose-500/10 to-pink-500/10 backdrop-blur-xl border border-rose-500/20 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-2xl font-black mb-5 flex items-center gap-3 text-white">
-                <div className="bg-gradient-to-br from-rose-500 to-pink-600 p-2 rounded-xl">
-                  <FolderOpen className="w-6 h-6" />
-                </div>
-                Mini Project
+            {/* Daily Reflection */}
+            <div className="bg-gradient-to-br from-yellow-500/10 to-amber-500/10 backdrop-blur-xl border border-yellow-500/20 rounded-2xl p-6">
+              <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
+                <Lightbulb className="w-6 h-6" />
+                Daily Reflection
               </h3>
-              <div className="space-y-4">
-                <input
-                  type="text"
-                  placeholder="Project name"
-                  value={currentEntry.miniProject.name}
-                  onChange={(e) => setCurrentEntry({
-                    ...currentEntry,
-                    miniProject: { ...currentEntry.miniProject, name: e.target.value }
-                  })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-                />
-                <textarea
-                  placeholder="Today's progress..."
-                  value={currentEntry.miniProject.progress}
-                  onChange={(e) => setCurrentEntry({
-                    ...currentEntry,
-                    miniProject: { ...currentEntry.miniProject, progress: e.target.value }
-                  })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-all h-28 resize-none"
-                />
-                <select
-                  value={currentEntry.miniProject.status}
-                  onChange={(e) => setCurrentEntry({
-                    ...currentEntry,
-                    miniProject: { ...currentEntry.miniProject, status: e.target.value }
-                  })}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-rose-500 transition-all"
-                >
-                  <option value="" className="bg-slate-900">Select status</option>
-                  <option value="planning" className="bg-slate-900">📋 Planning</option>
-                  <option value="started" className="bg-slate-900">🚀 Started</option>
-                  <option value="in-progress" className="bg-slate-900">⚡ In Progress</option>
-                  <option value="completed" className="bg-slate-900">✅ Completed</option>
-                </select>
-              </div>
+              <textarea
+                placeholder="What did you learn today? Any insights or thoughts..."
+                value={currentEntry.dailyReflection}
+                onChange={(e) => setCurrentEntry({ ...currentEntry, dailyReflection: e.target.value })}
+                className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white h-32 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+              />
             </div>
 
             {/* Save Button */}
             <button
               onClick={saveEntry}
-              className="w-full bg-gradient-to-r from-emerald-600 via-green-600 to-teal-600 hover:from-emerald-700 hover:via-green-700 hover:to-teal-700 py-5 rounded-2xl font-black text-xl shadow-2xl transition-all transform hover:scale-105 flex items-center justify-center gap-3 text-white group"
+              className="w-full bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 py-5 rounded-2xl font-black text-xl shadow-2xl transition-all transform hover:scale-105 flex items-center justify-center gap-3 text-white"
             >
-              <CheckCircle2 className="w-7 h-7 group-hover:rotate-12 transition-transform" />
+              <CheckCircle2 className="w-7 h-7" />
               Save Progress
-              <Zap className="w-7 h-7 group-hover:scale-125 transition-transform" />
+              <Zap className="w-7 h-7" />
             </button>
           </div>
         )}
 
         {/* History View */}
         {view === 'history' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-3xl font-black text-white flex items-center gap-3">
-                <Clock className="w-8 h-8" />
-                Learning History
-              </h2>
-              <button
-                onClick={exportWeeklyReport}
-                className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-all"
-              >
+          <div className="space-y-4">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-3xl font-black text-white">Learning History</h2>
+              <button onClick={exportToJSON} className="bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-xl font-bold flex items-center gap-2">
                 <Download className="w-5 h-5" />
-                Weekly Report
+                Export
               </button>
             </div>
             
             {entries.map((entry, i) => (
-              <div key={i} className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl hover:bg-white/10 transition-all group">
-                <div className="flex justify-between items-start mb-4">
-                  <h3 className="text-xl font-bold text-indigo-300">
-                    {new Date(entry.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                  </h3>
-                  <div className="flex gap-2 flex-wrap items-center">
-                    {entry.article.title && <span className="text-xs bg-blue-600/80 px-3 py-1 rounded-full font-semibold">📖 Article</span>}
-                    {entry.pythonCode && <span className="text-xs bg-emerald-600/80 px-3 py-1 rounded-full font-semibold">🐍 Python</span>}
-                    {entry.sqlCode && <span className="text-xs bg-orange-600/80 px-3 py-1 rounded-full font-semibold">🗄️ SQL</span>}
-                    {entry.englishWords.length > 0 && <span className="text-xs bg-purple-600/80 px-3 py-1 rounded-full font-semibold">🔤 +{entry.englishWords.length}</span>}
-                    <button
-                      onClick={() => editEntry(entry.date)}
-                      className="text-xs bg-indigo-600/80 hover:bg-indigo-700 px-3 py-1 rounded-full font-semibold flex items-center gap-1 transition-all"
-                    >
-                      <Edit2 className="w-3 h-3" />
-                      Edit
-                    </button>
-                  </div>
+              <div key={i} className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 hover:bg-white/10 transition-all">
+                <div className="flex justify-between items-start mb-3">
+                  <h3 className="text-xl font-bold text-indigo-300">{new Date(entry.date).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</h3>
+                  <button onClick={() => editEntry(entry.date)} className="bg-indigo-600/80 hover:bg-indigo-700 px-3 py-1 rounded-lg text-sm font-semibold flex items-center gap-1">
+                    <Edit2 className="w-3 h-3" />
+                    Edit
+                  </button>
                 </div>
-                
-                {entry.article.title && (
-                  <div className="mb-3 p-3 bg-blue-500/10 rounded-lg border border-blue-500/20">
-                    <p className="font-semibold text-blue-200 mb-1">📖 {entry.article.title}</p>
-                    {entry.article.url && (
-                      <a href={entry.article.url} target="_blank" rel="noopener noreferrer" className="text-blue-400 text-sm hover:underline break-all">
-                        {entry.article.url}
-                      </a>
-                    )}
-                    {entry.article.notes && <p className="text-gray-300 text-sm mt-2">{entry.article.notes}</p>}
-                  </div>
+                {entry.content?.englishWords?.length > 0 && (
+                  <div className="text-gray-300 text-sm">🔤 {entry.content.englishWords.length} words learned</div>
                 )}
-                
-                {entry.miniProject.name && (
-                  <div className="mb-3 p-3 bg-rose-500/10 rounded-lg border border-rose-500/20">
-                    <p className="font-semibold text-rose-200 mb-1">🎯 {entry.miniProject.name}</p>
-                    <p className="text-gray-300 text-sm">{entry.miniProject.progress}</p>
-                    {entry.miniProject.status && (
-                      <span className="inline-block mt-2 text-xs bg-rose-600/60 px-2 py-1 rounded font-semibold">{entry.miniProject.status}</span>
-                    )}
-                  </div>
-                )}
-                
-                {entry.wisdom.text && (
-                  <div className="mb-3 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
-                    <p className="text-yellow-200 italic">💡 "{entry.wisdom.text}"</p>
-                    {entry.wisdom.source && <p className="text-gray-400 text-sm mt-1">— {entry.wisdom.source}</p>}
-                  </div>
-                )}
-                
-                {entry.englishWords.length > 0 && (
-                  <div className="p-3 bg-purple-500/10 rounded-lg border border-purple-500/20">
-                    <p className="font-semibold text-purple-200 mb-2">🔤 Vocabulary ({entry.englishWords.length} words)</p>
-                    <div className="flex flex-wrap gap-2">
-                      {entry.englishWords.map((word, idx) => (
-                        <span key={idx} className="text-xs bg-purple-600/40 px-3 py-1 rounded-full text-purple-100">
-                          {word.word}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                {entry.content?.dailyReflection && (
+                  <p className="text-gray-400 text-sm mt-2 italic">"{entry.content.dailyReflection.substring(0, 100)}..."</p>
                 )}
               </div>
             ))}
-            
+
             {entries.length === 0 && (
               <div className="text-center py-20">
                 <Calendar className="w-20 h-20 text-gray-600 mx-auto mb-4" />
-                <p className="text-gray-400 text-xl font-semibold">No entries yet. Start logging your learning journey!</p>
+                <p className="text-gray-400 text-xl">No entries yet. Start logging!</p>
               </div>
             )}
           </div>
@@ -748,185 +1292,67 @@ export default function LearningTracker() {
         {/* Stats View */}
         {view === 'stats' && (
           <div className="space-y-6">
-            <h2 className="text-3xl font-black mb-8 flex items-center gap-3 text-white">
-              <TrendingUp className="w-8 h-8" />
-              Performance Analytics
-            </h2>
+            <h2 className="text-3xl font-black text-white mb-6">Performance Analytics</h2>
             
-            {/* Main Stats Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div className="relative overflow-hidden bg-gradient-to-br from-indigo-600 to-purple-600 rounded-2xl p-6 shadow-2xl">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-                <Award className="w-8 h-8 text-white/80 mb-3" />
-                <div className="text-5xl font-black mb-2 text-white">{stats.total}</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-gradient-to-br from-indigo-600 to-purple-600 rounded-2xl p-6">
+                <Award className="w-8 h-8 text-white/80 mb-2" />
+                <div className="text-5xl font-black text-white">{stats.total}</div>
                 <div className="text-indigo-100 font-semibold">Days Logged</div>
               </div>
               
-              <div className="relative overflow-hidden bg-gradient-to-br from-orange-600 to-red-600 rounded-2xl p-6 shadow-2xl">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-                <Flame className="w-8 h-8 text-white/80 mb-3" />
-                <div className="text-5xl font-black mb-2 text-white">{stats.streak}</div>
+              <div className="bg-gradient-to-br from-orange-600 to-red-600 rounded-2xl p-6">
+                <Flame className="w-8 h-8 text-white/80 mb-2" />
+                <div className="text-5xl font-black text-white">{stats.streak}</div>
                 <div className="text-orange-100 font-semibold">Current Streak</div>
               </div>
               
-              <div className="relative overflow-hidden bg-gradient-to-br from-blue-600 to-cyan-600 rounded-2xl p-6 shadow-2xl">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-                <BookOpen className="w-8 h-8 text-white/80 mb-3" />
-                <div className="text-5xl font-black mb-2 text-white">{stats.articlesRead}</div>
-                <div className="text-blue-100 font-semibold">Articles Read</div>
-              </div>
-              
-              <div className="relative overflow-hidden bg-gradient-to-br from-emerald-600 to-green-600 rounded-2xl p-6 shadow-2xl">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-                <Code className="w-8 h-8 text-white/80 mb-3" />
-                <div className="text-5xl font-black mb-2 text-white">{stats.pythonDone}</div>
-                <div className="text-emerald-100 font-semibold">Python Exercises</div>
-              </div>
-              
-              <div className="relative overflow-hidden bg-gradient-to-br from-orange-600 to-amber-600 rounded-2xl p-6 shadow-2xl">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-                <Database className="w-8 h-8 text-white/80 mb-3" />
-                <div className="text-5xl font-black mb-2 text-white">{stats.sqlDone}</div>
-                <div className="text-amber-100 font-semibold">SQL Exercises</div>
-              </div>
-              
-              <div className="relative overflow-hidden bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl p-6 shadow-2xl">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
-                <Languages className="w-8 h-8 text-white/80 mb-3" />
-                <div className="text-5xl font-black mb-2 text-white">{stats.totalWords}</div>
+              <div className="bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl p-6">
+                <Languages className="w-8 h-8 text-white/80 mb-2" />
+                <div className="text-5xl font-black text-white">{stats.totalWords}</div>
                 <div className="text-purple-100 font-semibold">Words Learned</div>
               </div>
             </div>
 
-            {/* Progress Bars */}
-            <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-xl font-bold text-white mb-6">60-Day Challenge Progress</h3>
-              <div className="space-y-4">
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <span className="text-gray-300 font-semibold">Overall Progress</span>
-                    <span className="text-white font-bold">{Math.round((stats.total / 60) * 100)}%</span>
-                  </div>
-                  <div className="h-4 bg-slate-800 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.min((stats.total / 60) * 100, 100)}%` }}
-                    ></div>
-                  </div>
-                </div>
-                
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <span className="text-gray-300 font-semibold">Python Completion</span>
-                    <span className="text-white font-bold">{Math.round((stats.pythonDone / 60) * 100)}%</span>
-                  </div>
-                  <div className="h-4 bg-slate-800 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-emerald-600 to-green-600 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.min((stats.pythonDone / 60) * 100, 100)}%` }}
-                    ></div>
-                  </div>
-                </div>
-                
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <span className="text-gray-300 font-semibold">SQL Completion</span>
-                    <span className="text-white font-bold">{Math.round((stats.sqlDone / 60) * 100)}%</span>
-                  </div>
-                  <div className="h-4 bg-slate-800 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-gradient-to-r from-orange-600 to-amber-600 rounded-full transition-all duration-500"
-                      style={{ width: `${Math.min((stats.sqlDone / 60) * 100, 100)}%` }}
-                    ></div>
-                  </div>
-                </div>
+            <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+              <h3 className="text-xl font-bold text-white mb-4">Your Interests</h3>
+              <div className="flex flex-wrap gap-2">
+                {userInterests.map(interest => (
+                  <span key={interest} className="bg-indigo-600/40 px-4 py-2 rounded-full text-white font-semibold">{interest}</span>
+                ))}
+                {userInterests.length === 0 && <p className="text-gray-400">No interests selected yet</p>}
               </div>
+              <button onClick={() => setShowOnboarding(true)} className="mt-4 text-indigo-400 hover:text-indigo-300 text-sm font-semibold">Update Interests</button>
             </div>
+          </div>
+        )}
 
-            {/* Export Section */}
-            <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-xl font-bold mb-4 text-white flex items-center gap-2">
-                <Download className="w-6 h-6" />
-                Export Your Data
-              </h3>
-              <p className="text-gray-300 mb-4">Download your learning data for backup or analysis</p>
-              <div className="flex gap-3 flex-wrap">
-                <button
-                  onClick={exportToJSON}
-                  className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-all"
-                >
-                  <Download className="w-5 h-5" />
-                  Export as JSON
-                </button>
-                <button
-                  onClick={exportWeeklyReport}
-                  className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 px-6 py-3 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-all"
-                >
-                  <Download className="w-5 h-5" />
-                  Weekly Report
-                </button>
-              </div>
-            </div>
-
-            {/* Achievements */}
-            {stats.total > 0 && (
-              <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-xl">
-                <h3 className="text-xl font-bold mb-6 text-white flex items-center gap-2">
-                  <Award className="w-6 h-6" />
-                  Achievements Unlocked
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {stats.total >= 1 && (
-                    <div className="bg-gradient-to-br from-blue-600/20 to-cyan-600/20 border border-blue-500/30 rounded-xl p-4 text-center">
-                      <div className="text-3xl mb-2">🎯</div>
-                      <div className="text-white font-bold text-sm">First Step</div>
-                    </div>
-                  )}
-                  {stats.streak >= 3 && (
-                    <div className="bg-gradient-to-br from-orange-600/20 to-red-600/20 border border-orange-500/30 rounded-xl p-4 text-center">
-                      <div className="text-3xl mb-2">🔥</div>
-                      <div className="text-white font-bold text-sm">3-Day Streak</div>
-                    </div>
-                  )}
-                  {stats.streak >= 7 && (
-                    <div className="bg-gradient-to-br from-yellow-600/20 to-amber-600/20 border border-yellow-500/30 rounded-xl p-4 text-center">
-                      <div className="text-3xl mb-2">⚡</div>
-                      <div className="text-white font-bold text-sm">Week Warrior</div>
-                    </div>
-                  )}
-                  {stats.totalWords >= 50 && (
-                    <div className="bg-gradient-to-br from-purple-600/20 to-pink-600/20 border border-purple-500/30 rounded-xl p-4 text-center">
-                      <div className="text-3xl mb-2">📚</div>
-                      <div className="text-white font-bold text-sm">Wordsmith</div>
-                    </div>
-                  )}
-                  {stats.pythonDone >= 10 && (
-                    <div className="bg-gradient-to-br from-emerald-600/20 to-green-600/20 border border-emerald-500/30 rounded-xl p-4 text-center">
-                      <div className="text-3xl mb-2">🐍</div>
-                      <div className="text-white font-bold text-sm">Python Pro</div>
-                    </div>
-                  )}
-                  {stats.sqlDone >= 10 && (
-                    <div className="bg-gradient-to-br from-orange-600/20 to-amber-600/20 border border-orange-500/30 rounded-xl p-4 text-center">
-                      <div className="text-3xl mb-2">🗄️</div>
-                      <div className="text-white font-bold text-sm">SQL Master</div>
-                    </div>
-                  )}
-                  {stats.total >= 30 && (
-                    <div className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 rounded-xl p-4 text-center">
-                      <div className="text-3xl mb-2">🏆</div>
-                      <div className="text-white font-bold text-sm">30-Day Hero</div>
-                    </div>
-                  )}
-                  {stats.total >= 60 && (
-                    <div className="bg-gradient-to-br from-pink-600/20 to-rose-600/20 border border-pink-500/30 rounded-xl p-4 text-center">
-                      <div className="text-3xl mb-2">👑</div>
-                      <div className="text-white font-bold text-sm">Legend</div>
-                    </div>
-                  )}
-                </div>
+        {/* Submissions View (Admin Only) */}
+        {view === 'submissions' && isAdmin && (
+          <div className="space-y-4">
+            <h2 className="text-3xl font-black text-white mb-6">📬 Challenge Submissions</h2>
+            
+            {submissions.length === 0 && (
+              <div className="text-center py-20">
+                <FileText className="w-20 h-20 text-gray-600 mx-auto mb-4" />
+                <p className="text-gray-400 text-xl">No submissions yet</p>
               </div>
             )}
+
+            {submissions.map((sub, i) => (
+              <div key={i} className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <h3 className="text-lg font-bold text-indigo-300">{sub.profiles?.email || 'Unknown user'}</h3>
+                    <p className="text-sm text-gray-400">{new Date(sub.submitted_at).toLocaleString()}</p>
+                  </div>
+                  <span className="text-xs bg-green-600/40 px-3 py-1 rounded-full text-green-200">Submitted</span>
+                </div>
+                <div className="bg-white/10 rounded-xl p-4">
+                  <p className="text-gray-200 whitespace-pre-wrap">{sub.submission_text}</p>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
