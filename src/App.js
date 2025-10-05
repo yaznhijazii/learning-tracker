@@ -1,14 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = 'https://yxeoxxocqbgzitwbcgoj.supabase.co'
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl4ZW94eG9jcWJneml0d2JjZ29qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk1NzIzOTIsImV4cCI6MjA3NTE0ODM5Mn0.qU0IYrFhgRFpK4ycQe4L7wHy_AwiRogb0fYfLYeBY8k'
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
-
-
-// ============================================
-// src/App.js - COMPLETE VERSION
-// ============================================
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { Calendar, BookOpen, Code, Database, Lightbulb, Languages, FolderOpen, Download, BarChart3, TrendingUp, Target, CheckCircle2, Flame, Award, Zap, Clock, Star, LogIn, LogOut, User, Edit2 } from 'lucide-react';
