@@ -260,7 +260,7 @@ export default function LearningTracker() {
 
   const deleteChallenge = async (challengeId) => {
     if (!isAdmin) return;
-    if (!confirm('⚠️ Are you sure you want to delete this challenge?')) return;
+    if (!window.confirm('⚠️ Are you sure you want to delete this challenge?')) return;
 
     const { error } = await supabase
       .from('daily_challenges')
