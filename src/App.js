@@ -51,8 +51,6 @@ export default function LearningTracker() {
   const ADMIN_EMAIL = 'yazanbrc@gmail.com';
   const isAdmin = user?.email === ADMIN_EMAIL;
 
-  console.log('🔍 Admin Check:', { userEmail: user?.email, isAdmin, ADMIN_EMAIL });
-
   // Check if user is logged in
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -91,10 +89,9 @@ export default function LearningTracker() {
         'videos': 'videos',
         'projects': 'projects',
         'workflows': 'workflows',
-        'automation': 'workflows',
         'n8n': 'workflows',
         'erp': 'workflows',
-        'bi': 'bi'
+        'bi': 'workflows'
       };
       const firstCategory = categoryMap[userInterests[0]] || userInterests[0];
       setActiveCategory(firstCategory);
@@ -169,7 +166,6 @@ export default function LearningTracker() {
   };
 
   const loadDailyChallenge = async () => {
-    console.log('📋 Loading daily challenges...');
     const today = new Date().toISOString().split('T')[0];
     const { data } = await supabase
       .from('daily_challenges')
@@ -177,7 +173,6 @@ export default function LearningTracker() {
       .eq('date', today)
       .order('created_at', { ascending: false });
     
-    console.log('📋 Challenges loaded:', data);
     setAllChallenges(data || []);
     setDailyChallenge(data?.[0] || null);
 
@@ -192,35 +187,26 @@ export default function LearningTracker() {
       setCompletedChallenge(!!completionData);
     }
 
-    // Load submissions for admin - FIXED
-    console.log('🔍 Checking admin status...', { userEmail: user?.email, ADMIN_EMAIL, isMatch: user?.email === ADMIN_EMAIL });
-    if (user?.email === ADMIN_EMAIL) {
-      console.log('✅ Admin detected! Loading submissions...');
-      const challengeIds = data?.map(c => c.id) || [];
-      console.log('🎯 Challenge IDs:', challengeIds);
+    // Load submissions for admin
+    if (isAdmin && data && data.length > 0) {
+      const challengeIds = data.map(c => c.id);
       
-      if (challengeIds.length > 0) {
-        const { data: submissionsData, error: subError } = await supabase
-          .from('challenge_submissions')
-          .select(`
-            *,
-            profiles!inner(email),
-            daily_challenges!inner(date, title)
-          `)
-          .in('challenge_id', challengeIds)
-          .order('submitted_at', { ascending: false });
-        
-        console.log('📬 Submissions loaded:', submissionsData);
-        console.log('❌ Submission errors:', subError);
-        setSubmissions(submissionsData || []);
-      }
-    } else {
-      console.log('❌ Not admin, skipping submissions');
+      const { data: submissionsData } = await supabase
+        .from('challenge_submissions')
+        .select(`
+          *,
+          profiles!inner(email),
+          daily_challenges!inner(date, title)
+        `)
+        .in('challenge_id', challengeIds)
+        .order('submitted_at', { ascending: false });
+      
+      setSubmissions(submissionsData || []);
     }
   };
 
   const loadSubmissions = async () => {
-    if (user?.email !== ADMIN_EMAIL) return;
+    if (!isAdmin) return;
     
     const today = new Date().toISOString().split('T')[0];
     
@@ -449,11 +435,9 @@ export default function LearningTracker() {
       'videos': 'videos',
       'projects': 'projects',
       'workflows': 'workflows',
-      'automation': 'workflows',
       'n8n': 'workflows',
       'erp': 'workflows',
-      'bi': 'bi',
-      'english': 'english'
+      'bi': 'workflows'
     };
 
     userInterests.forEach(interest => {
@@ -472,27 +456,17 @@ export default function LearningTracker() {
           interestStats[category].count += cat.questions.length;
         } else if (category === 'reading') {
           interestStats[category].count += (cat.articles?.length || 0) + (cat.books?.length || 0);
-        } else if (category === 'english') {
-          // Count English words from main englishWords array
-          interestStats[category].count += 0; // Will be updated below
         } else if (cat.items) {
           interestStats[category].count += cat.items.length;
         }
       });
     });
     
-    // Add English words count
-    if (interestStats['english']) {
-      entries.forEach(entry => {
-        interestStats['english'].count += (entry.content?.englishWords?.length || 0);
-      });
-    }
-    
     return { total, totalWords, streak, interestStats };
   };
 
   const createChallenge = async () => {
-    if (user?.email !== ADMIN_EMAIL) {
+    if (!isAdmin) {
       alert('⛔ Only admin can create challenges');
       return;
     }
@@ -502,10 +476,9 @@ export default function LearningTracker() {
       return;
     }
 
-    console.log('✍️ Creating challenge...', newChallenge);
     const today = new Date().toISOString().split('T')[0];
     
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('daily_challenges')
       .insert({
         date: today,
@@ -513,14 +486,11 @@ export default function LearningTracker() {
         description: newChallenge.description,
         category: newChallenge.category,
         created_by: user.id
-      })
-      .select();
+      });
 
     if (error) {
-      console.error('❌ Create error:', error);
       alert('❌ Error creating challenge: ' + error.message);
     } else {
-      console.log('✅ Challenge created:', data);
       alert('✅ Challenge created successfully!');
       setNewChallenge({ title: '', description: '', category: 'coding' });
       setShowCreateChallenge(false);
@@ -529,9 +499,9 @@ export default function LearningTracker() {
   };
 
   const updateChallenge = async () => {
-    if (user?.email !== ADMIN_EMAIL || !editingChallenge) return;
+    if (!isAdmin || !editingChallenge) return;
 
-    console.log('📝 Updating challenge:', editingChallenge);
+    console.log('Updating challenge:', editingChallenge);
 
     const { data, error } = await supabase
       .from('daily_challenges')
@@ -544,10 +514,10 @@ export default function LearningTracker() {
       .select();
 
     if (error) {
-      console.error('❌ Update error:', error);
+      console.error('Update error:', error);
       alert('❌ Error updating challenge: ' + error.message);
     } else {
-      console.log('✅ Update success:', data);
+      console.log('Update success:', data);
       // Update local state
       const updatedChallenges = allChallenges.map(c => 
         c.id === editingChallenge.id ? editingChallenge : c
@@ -563,43 +533,43 @@ export default function LearningTracker() {
   };
 
   const deleteChallenge = async (challengeId) => {
-    if (user?.email !== ADMIN_EMAIL) return;
+    if (!isAdmin) return;
     if (!window.confirm('⚠️ Are you sure you want to delete this challenge? All related data will be deleted.')) return;
 
-    console.log('🗑️ Attempting to delete challenge:', challengeId);
+    console.log('Attempting to delete challenge:', challengeId);
 
     try {
       // Step 1: Delete completions
-      console.log('🗑️ Deleting completions...');
+      console.log('Deleting completions...');
       const { error: completionsError } = await supabase
         .from('challenge_completions')
         .delete()
         .eq('challenge_id', challengeId);
 
       if (completionsError) {
-        console.error('⚠️ Completions delete error:', completionsError);
+        console.error('Completions delete error:', completionsError);
       }
 
       // Step 2: Delete submissions
-      console.log('🗑️ Deleting submissions...');
+      console.log('Deleting submissions...');
       const { error: submissionsError } = await supabase
         .from('challenge_submissions')
         .delete()
         .eq('challenge_id', challengeId);
 
       if (submissionsError) {
-        console.error('⚠️ Submissions delete error:', submissionsError);
+        console.error('Submissions delete error:', submissionsError);
       }
 
       // Step 3: Delete the challenge
-      console.log('🗑️ Deleting challenge...');
+      console.log('Deleting challenge...');
       const { data, error } = await supabase
         .from('daily_challenges')
         .delete()
         .eq('id', challengeId)
         .select();
 
-      console.log('🗑️ Delete result:', { data, error });
+      console.log('Delete result:', { data, error });
 
       if (error) {
         alert('❌ Delete error: ' + error.message);
@@ -615,7 +585,7 @@ export default function LearningTracker() {
       alert('✅ Successfully deleted!');
       
     } catch (err) {
-      console.error('💥 Delete exception:', err);
+      console.error('Delete exception:', err);
       alert('❌ Error: ' + err.message);
     }
   };
@@ -628,7 +598,6 @@ export default function LearningTracker() {
       return;
     }
 
-    console.log('📤 Submitting challenge...', { challengeId: dailyChallenge.id, userId: user.id });
     setUploadingFile(true);
     
     try {
@@ -636,7 +605,6 @@ export default function LearningTracker() {
       
       // Upload file if exists
       if (challengeSubmission.file) {
-        console.log('📁 Uploading file...');
         const fileExt = challengeSubmission.file.name.split('.').pop();
         const fileName = `${user.id}/${Date.now()}.${fileExt}`;
         
@@ -644,24 +612,17 @@ export default function LearningTracker() {
           .from('challenge-submissions')
           .upload(fileName, challengeSubmission.file);
 
-        if (uploadError) {
-          console.error('❌ Upload error:', uploadError);
-          throw uploadError;
-        }
-        
-        console.log('✅ File uploaded:', uploadData);
+        if (uploadError) throw uploadError;
         
         const { data: urlData } = supabase.storage
           .from('challenge-submissions')
           .getPublicUrl(fileName);
         
         fileUrl = urlData.publicUrl;
-        console.log('🔗 File URL:', fileUrl);
       }
 
       // Insert submission
-      console.log('💾 Inserting submission...');
-      const { data: subData, error } = await supabase
+      const { error } = await supabase
         .from('challenge_submissions')
         .insert({
           user_id: user.id,
@@ -669,19 +630,12 @@ export default function LearningTracker() {
           submission_text: challengeSubmission.text || '',
           file_url: fileUrl,
           submitted_at: new Date().toISOString()
-        })
-        .select();
+        });
 
-      if (error) {
-        console.error('❌ Submission error:', error);
-        throw error;
-      }
-
-      console.log('✅ Submission inserted:', subData);
+      if (error) throw error;
 
       // Mark challenge as completed
-      console.log('✅ Marking challenge complete...');
-      const { error: completeError } = await supabase
+      await supabase
         .from('challenge_completions')
         .insert({
           user_id: user.id,
@@ -689,11 +643,6 @@ export default function LearningTracker() {
           completed_at: new Date().toISOString()
         });
 
-      if (completeError) {
-        console.error('⚠️ Complete error (non-critical):', completeError);
-      }
-
-      console.log('🎉 All done!');
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
       
@@ -702,7 +651,6 @@ export default function LearningTracker() {
       setCompletedChallenge(true);
       
     } catch (error) {
-      console.error('💥 Fatal error:', error);
       alert('❌ Error: ' + error.message);
     } finally {
       setUploadingFile(false);
@@ -820,10 +768,9 @@ export default function LearningTracker() {
       { id: 'books', label: '📚 Books' },
       { id: 'projects', label: '🎯 Projects' },
       { id: 'workflows', label: '⚙️ Workflows' },
-      { id: 'automation', label: '🔗 Automation' },
       { id: 'n8n', label: '🔗 n8n' },
       { id: 'erp', label: '💼 ERP Systems' },
-      { id: 'bi', label: '📈 BI & Analytics' },
+      { id: 'bi', label: '📈 BI Tools' },
       { id: 'videos', label: '🎥 Videos' },
     ];
 
@@ -933,7 +880,7 @@ export default function LearningTracker() {
         </div>
 
         {/* Daily Challenge Banner */}
-        {user?.email === ADMIN_EMAIL && (
+        {isAdmin && (
           <div className="mb-6">
             <button
               onClick={() => setShowCreateChallenge(!showCreateChallenge)}
@@ -1084,7 +1031,7 @@ export default function LearningTracker() {
         )}
 
         {/* Admin Challenge Management */}
-        {allChallenges.length > 0 && user?.email === ADMIN_EMAIL && (
+        {allChallenges.length > 0 && isAdmin && (
           <div className="mb-6">
             <div className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-6 mb-4">
               <h3 className="text-xl font-bold text-white mb-2">📊 Today's Challenges Overview</h3>
@@ -1210,7 +1157,7 @@ export default function LearningTracker() {
           { id: 'entry', icon: BookOpen, label: 'Today' },
             { id: 'history', icon: Calendar, label: 'History' },
             { id: 'stats', icon: BarChart3, label: 'Stats' },
-            ...(user?.email === ADMIN_EMAIL ? [{ id: 'submissions', icon: FileText, label: '📬 Submissions' }] : [])
+            ...(isAdmin ? [{ id: 'submissions', icon: FileText, label: '📬 Submissions' }] : [])
           ].map(nav => (
             <button
               key={nav.id}
@@ -1269,7 +1216,6 @@ export default function LearningTracker() {
                     'videos': { icon: Play, label: '🎥 Videos' },
                     'projects': { icon: Target, label: '🎯 Projects' },
                     'workflows': { icon: Database, label: '⚙️ Workflows' },
-                    'bi': { icon: BarChart3, label: '📈 BI & Analytics' },
                     'english': { icon: Languages, label: '🔤 English' },
                     'other': { icon: FileText, label: '📝 Other' }
                   };
@@ -1298,8 +1244,6 @@ export default function LearningTracker() {
                   { id: 'videos', label: '🎥 Videos', icon: Play },
                   { id: 'projects', label: '🎯 Projects', icon: Target },
                   { id: 'workflows', label: '⚙️ Workflows', icon: Database },
-                  { id: 'bi', label: '📈 BI & Analytics', icon: BarChart3 },
-                  { id: 'english', label: '🔤 English', icon: Languages },
                   { id: 'other', label: '📝 Other', icon: FileText }
                 ].map(cat => (
                   <button
@@ -1574,100 +1518,6 @@ export default function LearningTracker() {
               </div>
             )}
 
-            {/* BI Tools Category */}
-            {activeCategory === 'bi' && (
-              <div className="bg-gradient-to-br from-cyan-500/10 to-teal-500/10 backdrop-blur-xl border border-cyan-500/20 rounded-2xl p-6">
-                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
-                  <BarChart3 className="w-6 h-6" />
-                  Business Intelligence & Analytics
-                </h3>
-                
-                {currentEntry.categories.bi.items?.map((item, i) => (
-                  <div key={i} className="bg-white/5 rounded-xl p-4 mb-3 border border-white/10">
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="text-cyan-300 font-semibold text-sm">BI Item #{i + 1}</span>
-                      <button onClick={() => removeItem('bi', 'items', i)} className="text-red-400 hover:text-red-300 text-xl">×</button>
-                    </div>
-                    <input
-                      placeholder="Dashboard, Report, or Analysis name..."
-                      value={item.title}
-                      onChange={(e) => updateItem('bi', 'items', i, 'title', e.target.value)}
-                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white mb-2 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    />
-                    <textarea
-                      placeholder="What insights did you discover? What tools did you use (Power BI, Tableau, etc)?"
-                      value={item.notes}
-                      onChange={(e) => updateItem('bi', 'items', i, 'notes', e.target.value)}
-                      className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white h-24 focus:outline-none focus:ring-2 focus:ring-cyan-500"
-                    />
-                  </div>
-                ))}
-                <button onClick={() => addItem('bi', 'items')} className="w-full bg-cyan-600/20 hover:bg-cyan-600/30 border-2 border-dashed border-cyan-500/50 rounded-xl py-2 text-cyan-300 font-semibold">+ Add BI Item</button>
-              </div>
-            )}
-
-            {/* English Category */}
-            {activeCategory === 'english' && (
-              <div className="bg-gradient-to-br from-pink-500/10 to-rose-500/10 backdrop-blur-xl border border-pink-500/20 rounded-2xl p-6">
-                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
-                  <Languages className="w-6 h-6" />
-                  English Learning
-                </h3>
-                
-                <div className="bg-white/5 rounded-xl p-4 mb-4">
-                  <h4 className="text-lg font-bold text-pink-300 mb-3">📝 New Words</h4>
-                  <div className="flex gap-2 mb-3">
-                    <input
-                      placeholder="Word..."
-                      value={newWord.word}
-                      onChange={(e) => setNewWord({ ...newWord, word: e.target.value })}
-                      className="flex-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-pink-500"
-                    />
-                    <input
-                      placeholder="Meaning..."
-                      value={newWord.meaning}
-                      onChange={(e) => setNewWord({ ...newWord, meaning: e.target.value })}
-                      className="flex-1 bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-pink-500"
-                    />
-                    <button
-                      onClick={addWord}
-                      className="bg-pink-600 hover:bg-pink-700 px-4 py-2 rounded-lg font-bold text-white"
-                    >
-                      +
-                    </button>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    {currentEntry.englishWords.map((w, i) => (
-                      <div key={i} className="bg-white/10 rounded-lg p-3 flex justify-between items-center">
-                        <div>
-                          <span className="text-white font-bold">{w.word}</span>
-                          <span className="text-gray-300 ml-3">→ {w.meaning}</span>
-                        </div>
-                        <button
-                          onClick={() => removeWord(i)}
-                          className="text-red-400 hover:text-red-300 text-xl"
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <textarea
-                  placeholder="General notes about English learning today..."
-                  value={currentEntry.categories.english.notes}
-                  onChange={(e) => {
-                    const updated = { ...currentEntry };
-                    updated.categories.english.notes = e.target.value;
-                    setCurrentEntry(updated);
-                  }}
-                  className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white h-24 focus:outline-none focus:ring-2 focus:ring-pink-500"
-                />
-              </div>
-            )}
-
             {/* Other Category */}
             {activeCategory === 'other' && (
               <div className="bg-gradient-to-br from-slate-500/10 to-gray-500/10 backdrop-blur-xl border border-slate-500/20 rounded-2xl p-6">
@@ -1800,18 +1650,14 @@ export default function LearningTracker() {
                     reading: 'from-blue-600 to-cyan-600',
                     videos: 'from-red-600 to-pink-600',
                     projects: 'from-purple-600 to-pink-600',
-                    workflows: 'from-amber-600 to-orange-600',
-                    bi: 'from-cyan-600 to-teal-600',
-                    english: 'from-pink-600 to-rose-600'
+                    workflows: 'from-amber-600 to-orange-600'
                   };
                   const icons = {
                     coding: Code,
                     reading: BookOpen,
                     videos: Play,
                     projects: Target,
-                    workflows: Database,
-                    bi: BarChart3,
-                    english: Languages
+                    workflows: Database
                   };
                   const IconComponent = icons[category] || Star;
                   
@@ -1840,19 +1686,13 @@ export default function LearningTracker() {
         )}
 
         {/* Submissions View (Admin Only) */}
-        {view === 'submissions' && user?.email === ADMIN_EMAIL && (
+        {view === 'submissions' && isAdmin && (
           <div className="space-y-4">
             <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-3xl font-black text-white">📬 Today's Submissions</h2>
-                <p className="text-gray-400 text-sm mt-1">Total: {submissions.length} submission(s)</p>
-              </div>
+              <h2 className="text-3xl font-black text-white">📬 Today's Submissions</h2>
               <button 
-                onClick={() => {
-                  console.log('🔄 Manual refresh clicked');
-                  loadDailyChallenge();
-                }}
-                className="bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-xl font-semibold text-white flex items-center gap-2"
+                onClick={loadSubmissions}
+                className="bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-xl font-semibold text-white"
               >
                 🔄 Refresh
               </button>
