@@ -47,11 +47,9 @@ export default function LearningTracker() {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
 
-  // Admin email that can create challenges
   const ADMIN_EMAIL = 'yazanbrc@gmail.com';
   const isAdmin = user?.email === ADMIN_EMAIL;
 
-  // Check if user is logged in
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
@@ -65,16 +63,15 @@ export default function LearningTracker() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Load data when user logs in
   useEffect(() => {
     if (user) {
       loadEntries();
       loadUserProfile();
       loadDailyChallenge();
+      loadSubmissions(); // حمّل الـ submissions دايماً
     }
   }, [user]);
 
-  // Set first interest as active category when loaded
   useEffect(() => {
     if (userInterests.length > 0 && !activeCategory) {
       const categoryMap = {
@@ -83,7 +80,6 @@ export default function LearningTracker() {
         'javascript': 'coding',
         'data-analysis': 'coding',
         'machine-learning': 'coding',
-        'english': 'english',
         'articles': 'reading',
         'books': 'reading',
         'videos': 'videos',
@@ -98,7 +94,6 @@ export default function LearningTracker() {
     }
   }, [userInterests, activeCategory]);
 
-  // Load entry for selected date
   useEffect(() => {
     if (user && currentEntry.date) {
       loadEntryForDate(currentEntry.date);
@@ -187,61 +182,87 @@ export default function LearningTracker() {
       setCompletedChallenge(!!completionData);
     }
 
-    // Load submissions for admin
-    if (isAdmin && data && data.length > 0) {
-      const challengeIds = data.map(c => c.id);
-      
-      const { data: submissionsData } = await supabase
-        .from('challenge_submissions')
-        .select(`
-          *,
-          profiles!inner(email),
-          daily_challenges!inner(date, title)
-        `)
-        .in('challenge_id', challengeIds)
-        .order('submitted_at', { ascending: false });
-      
-      setSubmissions(submissionsData || []);
-    }
+    // حمّل الـ submissions دايماً مع التحديات
+    await loadSubmissions();
   };
 
   const loadSubmissions = async () => {
-    if (!isAdmin) return;
-    
     const today = new Date().toISOString().split('T')[0];
     
-    const { data: challengesData } = await supabase
+    console.log('🔍 Loading submissions for date:', today);
+    
+    // أول شي نجيب التحديات
+    const { data: challengesData, error: challengesError } = await supabase
       .from('daily_challenges')
-      .select('id')
+      .select('id, title')
       .eq('date', today);
     
+    console.log('🎯 Challenges found:', challengesData);
+    if (challengesError) console.error('❌ Challenges error:', challengesError);
+    
     if (!challengesData || challengesData.length === 0) {
+      console.log('⚠️ No challenges for today');
       setSubmissions([]);
       return;
     }
     
     const challengeIds = challengesData.map(c => c.id);
+    console.log('🆔 Challenge IDs:', challengeIds);
     
-    const { data } = await supabase
+    // نجرب نجيب الـ submissions بدون joins
+    const { data: rawSubmissions, error: submissionsError } = await supabase
       .from('challenge_submissions')
-      .select(`
-        *,
-        profiles!inner(email),
-        daily_challenges!inner(date, title)
-      `)
+      .select('*')
       .in('challenge_id', challengeIds)
       .order('submitted_at', { ascending: false });
     
-    setSubmissions(data || []);
+    console.log('📬 Raw submissions:', rawSubmissions);
+    if (submissionsError) console.error('❌ Submissions error:', submissionsError);
+    
+    if (!rawSubmissions || rawSubmissions.length === 0) {
+      console.log('⚠️ No submissions found');
+      setSubmissions([]);
+      return;
+    }
+    
+    // هسا نجيب الـ profiles بشكل منفصل
+    const userIds = [...new Set(rawSubmissions.map(s => s.user_id))];
+    const { data: profilesData } = await supabase
+      .from('profiles')
+      .select('id, email')
+      .in('id', userIds);
+    
+    console.log('👤 Profiles:', profilesData);
+    
+    // نربط البيانات يدوياً
+    const enrichedSubmissions = rawSubmissions.map(sub => {
+      const profile = profilesData?.find(p => p.id === sub.user_id);
+      const challenge = challengesData.find(c => c.id === sub.challenge_id);
+      
+      return {
+        ...sub,
+        profiles: profile ? { email: profile.email } : null,
+        daily_challenges: challenge ? { title: challenge.title, date: today } : null
+      };
+    });
+    
+    console.log('✅ Final submissions:', enrichedSubmissions);
+    setSubmissions(enrichedSubmissions);
   };
 
   const saveInterests = async (interests) => {
-    const { error } = await supabase
+    console.log('Saving interests:', interests);
+    const { data, error } = await supabase
       .from('profiles')
       .update({ interests: interests })
-      .eq('id', user.id);
+      .eq('id', user.id)
+      .select();
     
-    if (!error) {
+    if (error) {
+      console.error('Error saving interests:', error);
+      alert('❌ Error: ' + error.message);
+    } else {
+      console.log('Interests saved:', data);
       setUserInterests(interests);
       setShowOnboarding(false);
     }
@@ -422,7 +443,6 @@ export default function LearningTracker() {
       }
     }
     
-    // Calculate interest-based stats
     const interestStats = {};
     const categoryMap = {
       'python': 'coding',
@@ -494,14 +514,12 @@ export default function LearningTracker() {
       alert('✅ Challenge created successfully!');
       setNewChallenge({ title: '', description: '', category: 'coding' });
       setShowCreateChallenge(false);
-      loadDailyChallenge();
+      await loadDailyChallenge(); // هاي بتحمّل الـ submissions كمان
     }
   };
 
   const updateChallenge = async () => {
     if (!isAdmin || !editingChallenge) return;
-
-    console.log('Updating challenge:', editingChallenge);
 
     const { data, error } = await supabase
       .from('daily_challenges')
@@ -514,11 +532,8 @@ export default function LearningTracker() {
       .select();
 
     if (error) {
-      console.error('Update error:', error);
       alert('❌ Error updating challenge: ' + error.message);
     } else {
-      console.log('Update success:', data);
-      // Update local state
       const updatedChallenges = allChallenges.map(c => 
         c.id === editingChallenge.id ? editingChallenge : c
       );
@@ -534,49 +549,29 @@ export default function LearningTracker() {
 
   const deleteChallenge = async (challengeId) => {
     if (!isAdmin) return;
-    if (!window.confirm('⚠️ Are you sure you want to delete this challenge? All related data will be deleted.')) return;
-
-    console.log('Attempting to delete challenge:', challengeId);
+    if (!window.confirm('⚠️ Are you sure you want to delete this challenge?')) return;
 
     try {
-      // Step 1: Delete completions
-      console.log('Deleting completions...');
       const { error: completionsError } = await supabase
         .from('challenge_completions')
         .delete()
         .eq('challenge_id', challengeId);
 
-      if (completionsError) {
-        console.error('Completions delete error:', completionsError);
-      }
-
-      // Step 2: Delete submissions
-      console.log('Deleting submissions...');
       const { error: submissionsError } = await supabase
         .from('challenge_submissions')
         .delete()
         .eq('challenge_id', challengeId);
 
-      if (submissionsError) {
-        console.error('Submissions delete error:', submissionsError);
-      }
-
-      // Step 3: Delete the challenge
-      console.log('Deleting challenge...');
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('daily_challenges')
         .delete()
-        .eq('id', challengeId)
-        .select();
-
-      console.log('Delete result:', { data, error });
+        .eq('id', challengeId);
 
       if (error) {
         alert('❌ Delete error: ' + error.message);
         return;
       }
 
-      // Update local state
       const updatedChallenges = allChallenges.filter(c => c.id !== challengeId);
       setAllChallenges(updatedChallenges);
       setDailyChallenge(updatedChallenges[0] || null);
@@ -584,8 +579,10 @@ export default function LearningTracker() {
       
       alert('✅ Successfully deleted!');
       
+      // حمّل الـ submissions من جديد
+      await loadSubmissions();
+      
     } catch (err) {
-      console.error('Delete exception:', err);
       alert('❌ Error: ' + err.message);
     }
   };
@@ -603,12 +600,11 @@ export default function LearningTracker() {
     try {
       let fileUrl = null;
       
-      // Upload file if exists
       if (challengeSubmission.file) {
         const fileExt = challengeSubmission.file.name.split('.').pop();
         const fileName = `${user.id}/${Date.now()}.${fileExt}`;
         
-        const { data: uploadData, error: uploadError } = await supabase.storage
+        const { error: uploadError } = await supabase.storage
           .from('challenge-submissions')
           .upload(fileName, challengeSubmission.file);
 
@@ -621,8 +617,7 @@ export default function LearningTracker() {
         fileUrl = urlData.publicUrl;
       }
 
-      // Insert submission
-      const { error } = await supabase
+      const { data: submissionData, error: submissionError } = await supabase
         .from('challenge_submissions')
         .insert({
           user_id: user.id,
@@ -630,12 +625,15 @@ export default function LearningTracker() {
           submission_text: challengeSubmission.text || '',
           file_url: fileUrl,
           submitted_at: new Date().toISOString()
-        });
+        })
+        .select();
 
-      if (error) throw error;
+      if (submissionError) {
+        console.error('Submission error:', submissionError);
+        throw submissionError;
+      }
 
-      // Mark challenge as completed
-      await supabase
+      const { error: completionError } = await supabase
         .from('challenge_completions')
         .insert({
           user_id: user.id,
@@ -650,14 +648,17 @@ export default function LearningTracker() {
       setShowSubmissionForm(false);
       setCompletedChallenge(true);
       
+      // حمّل الـ submissions من جديد للجميع (الأدمن بشوفها لما يدخل)
+      await loadSubmissions();
+      
     } catch (error) {
+      console.error('Submit error:', error);
       alert('❌ Error: ' + error.message);
     } finally {
       setUploadingFile(false);
     }
   };
 
-  // Login Screen
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 flex items-center justify-center">
@@ -755,7 +756,6 @@ export default function LearningTracker() {
     );
   }
 
-  // Onboarding Screen
   if (showOnboarding) {
     const allInterests = [
       { id: 'python', label: '🐍 Python' },
@@ -763,7 +763,6 @@ export default function LearningTracker() {
       { id: 'javascript', label: '⚡ JavaScript' },
       { id: 'data-analysis', label: '📊 Data Analysis' },
       { id: 'machine-learning', label: '🤖 ML & AI' },
-      { id: 'english', label: '🔤 English' },
       { id: 'articles', label: '📖 Articles' },
       { id: 'books', label: '📚 Books' },
       { id: 'projects', label: '🎯 Projects' },
@@ -811,9 +810,13 @@ export default function LearningTracker() {
           </div>
 
           <button
-            onClick={() => saveInterests(tempInterests)}
+            onClick={() => {
+              if (tempInterests.length > 0) {
+                saveInterests(tempInterests);
+              }
+            }}
             disabled={tempInterests.length === 0}
-            className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 py-4 rounded-xl font-bold text-white text-lg disabled:opacity-50"
+            className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 py-4 rounded-xl font-bold text-white text-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {tempInterests.length === 0 ? 'Select at least one' : `Continue (${tempInterests.length})`}
           </button>
@@ -831,7 +834,6 @@ export default function LearningTracker() {
 
   const stats = getStats();
 
-  // Main App
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950">
       {showSuccess && (
@@ -842,7 +844,6 @@ export default function LearningTracker() {
       )}
 
       <div className="max-w-7xl mx-auto px-4 py-6">
-        {/* Header */}
         <div className="bg-gradient-to-r from-indigo-600/20 via-purple-600/20 to-pink-600/20 backdrop-blur-xl border border-white/10 rounded-3xl p-6 mb-6 shadow-2xl">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
@@ -879,7 +880,6 @@ export default function LearningTracker() {
           </div>
         </div>
 
-        {/* Daily Challenge Banner */}
         {isAdmin && (
           <div className="mb-6">
             <button
@@ -907,7 +907,6 @@ export default function LearningTracker() {
                       <option value="reading" style={{ backgroundColor: '#1e293b', color: 'white' }}>📖 Reading</option>
                       <option value="videos" style={{ backgroundColor: '#1e293b', color: 'white' }}>🎥 Videos</option>
                       <option value="projects" style={{ backgroundColor: '#1e293b', color: 'white' }}>🎯 Projects</option>
-                      <option value="english" style={{ backgroundColor: '#1e293b', color: 'white' }}>🔤 English</option>
                       <option value="general" style={{ backgroundColor: '#1e293b', color: 'white' }}>✨ General</option>
                     </select>
                   </div>
@@ -945,7 +944,6 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {/* All Challenges for Today */}
         {allChallenges.length > 0 && !isAdmin && (
           <div className="mb-6">
             {allChallenges.map((challenge, idx) => {
@@ -1030,12 +1028,21 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {/* Admin Challenge Management */}
         {allChallenges.length > 0 && isAdmin && (
           <div className="mb-6">
             <div className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-6 mb-4">
-              <h3 className="text-xl font-bold text-white mb-2">📊 Today's Challenges Overview</h3>
-              <p className="text-gray-300 mb-4">{allChallenges.length} challenge(s) active • {submissions.length} submission(s) received</p>
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-white mb-2">📊 Today's Challenges Overview</h3>
+                  <p className="text-gray-300">{allChallenges.length} challenge(s) active • {submissions.length} submission(s) received</p>
+                </div>
+                <button
+                  onClick={loadSubmissions}
+                  className="bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-xl font-semibold text-white"
+                >
+                  🔄 Refresh
+                </button>
+              </div>
               
               <button
                 onClick={() => setView('submissions')}
@@ -1060,7 +1067,6 @@ export default function LearningTracker() {
                       <option value="reading" style={{ backgroundColor: '#1e293b', color: 'white' }}>📖 Reading</option>
                       <option value="videos" style={{ backgroundColor: '#1e293b', color: 'white' }}>🎥 Videos</option>
                       <option value="projects" style={{ backgroundColor: '#1e293b', color: 'white' }}>🎯 Projects</option>
-                      <option value="english" style={{ backgroundColor: '#1e293b', color: 'white' }}>🔤 English</option>
                       <option value="general" style={{ backgroundColor: '#1e293b', color: 'white' }}>✨ General</option>
                     </select>
                     <input
@@ -1113,15 +1119,6 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {completedChallenge && dailyChallenge && (
-          <div className="bg-gradient-to-r from-green-600/20 to-emerald-600/20 backdrop-blur-xl border border-green-500/30 rounded-2xl p-4 mb-6">
-            <div className="flex items-center gap-3 text-green-200">
-              <CheckCircle2 className="w-6 h-6" />
-              <span className="font-semibold">Challenge completed! 🎉</span>
-            </div>
-          </div>
-        )}
-
         {!dailyChallenge && !isAdmin && allChallenges.length === 0 && (
           <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 mb-6 text-center">
             <Clock className="w-12 h-12 text-gray-400 mx-auto mb-2" />
@@ -1129,32 +1126,9 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {dailyChallenge && !completedChallenge && !isAdmin && allChallenges.length === 0 && (
-          <div className="bg-gradient-to-r from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6 mb-6">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <Trophy className="w-6 h-6 text-yellow-400" />
-                  <h3 className="text-xl font-bold text-white">Today's Challenge</h3>
-                  <span className="text-xs bg-yellow-600/40 px-2 py-1 rounded-full text-yellow-200">{dailyChallenge.category}</span>
-                </div>
-                <p className="text-lg text-gray-200 mb-2">{dailyChallenge.title}</p>
-                <p className="text-sm text-gray-300">{dailyChallenge.description}</p>
-              </div>
-              <button
-                onClick={markChallengeComplete}
-                className="bg-yellow-600 hover:bg-yellow-700 px-6 py-3 rounded-xl font-bold text-white whitespace-nowrap"
-              >
-                Mark Complete
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Navigation */}
         <div className="flex gap-3 mb-6 overflow-x-auto pb-2">
           {[
-          { id: 'entry', icon: BookOpen, label: 'Today' },
+            { id: 'entry', icon: BookOpen, label: 'Today' },
             { id: 'history', icon: Calendar, label: 'History' },
             { id: 'stats', icon: BarChart3, label: 'Stats' },
             ...(isAdmin ? [{ id: 'submissions', icon: FileText, label: '📬 Submissions' }] : [])
@@ -1174,10 +1148,8 @@ export default function LearningTracker() {
           ))}
         </div>
 
-        {/* Entry View */}
         {view === 'entry' && (
           <div className="space-y-6">
-            {/* Date Selector */}
             <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4">
               <label className="block text-sm font-bold text-indigo-300 mb-2">Date</label>
               <input
@@ -1188,7 +1160,6 @@ export default function LearningTracker() {
               />
             </div>
 
-            {/* Category Tabs */}
             <div className="flex gap-2 overflow-x-auto pb-2">
               {userInterests.length > 0 ? (
                 (() => {
@@ -1205,18 +1176,21 @@ export default function LearningTracker() {
                     'workflows': 'workflows',
                     'n8n': 'workflows',
                     'erp': 'workflows',
-                    'bi': 'workflows',
-                    'english': 'english'
+                    'bi': 'workflows'
                   };
                   
                   const categories = [...new Set(userInterests.map(i => categoryMap[i] || i))];
+                  
+                  if (!categories.includes('other')) {
+                    categories.push('other');
+                  }
+                  
                   const iconMap = {
                     'coding': { icon: Code, label: '💻 Coding' },
                     'reading': { icon: BookOpen, label: '📖 Reading' },
                     'videos': { icon: Play, label: '🎥 Videos' },
                     'projects': { icon: Target, label: '🎯 Projects' },
                     'workflows': { icon: Database, label: '⚙️ Workflows' },
-                    'english': { icon: Languages, label: '🔤 English' },
                     'other': { icon: FileText, label: '📝 Other' }
                   };
 
@@ -1261,7 +1235,6 @@ export default function LearningTracker() {
               )}
             </div>
 
-            {/* Coding Category */}
             {activeCategory === 'coding' && (
               <div className="bg-gradient-to-br from-emerald-500/10 to-green-500/10 backdrop-blur-xl border border-emerald-500/20 rounded-2xl p-6">
                 <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
@@ -1269,7 +1242,6 @@ export default function LearningTracker() {
                   Coding Practice
                 </h3>
                 
-                {/* Language Selector */}
                 <div className="mb-4">
                   <label className="block text-sm font-semibold text-emerald-300 mb-2">Select Language:</label>
                   <select
@@ -1287,7 +1259,6 @@ export default function LearningTracker() {
                     {userInterests.includes('javascript') && 
                       <option value="javascript" style={{ backgroundColor: '#1e293b', color: 'white' }}>⚡ JavaScript</option>
                     }
-                    {/* Fallback if no specific language in interests */}
                     {!userInterests.some(i => ['python', 'sql', 'javascript', 'data-analysis', 'machine-learning'].includes(i)) && (
                       <>
                         <option value="python" style={{ backgroundColor: '#1e293b', color: 'white' }}>🐍 Python</option>
@@ -1350,7 +1321,6 @@ export default function LearningTracker() {
               </div>
             )}
 
-            {/* Reading Category */}
             {activeCategory === 'reading' && (
               <div className="bg-gradient-to-br from-blue-500/10 to-cyan-500/10 backdrop-blur-xl border border-blue-500/20 rounded-2xl p-6">
                 <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
@@ -1416,7 +1386,6 @@ export default function LearningTracker() {
               </div>
             )}
 
-            {/* Videos Category */}
             {activeCategory === 'videos' && (
               <div className="bg-gradient-to-br from-red-500/10 to-pink-500/10 backdrop-blur-xl border border-red-500/20 rounded-2xl p-6">
                 <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
@@ -1454,7 +1423,6 @@ export default function LearningTracker() {
               </div>
             )}
 
-            {/* Projects Category */}
             {activeCategory === 'projects' && (
               <div className="bg-gradient-to-br from-purple-500/10 to-pink-500/10 backdrop-blur-xl border border-purple-500/20 rounded-2xl p-6">
                 <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
@@ -1486,7 +1454,6 @@ export default function LearningTracker() {
               </div>
             )}
 
-            {/* Workflows Category */}
             {activeCategory === 'workflows' && (
               <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 backdrop-blur-xl border border-amber-500/20 rounded-2xl p-6">
                 <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
@@ -1518,7 +1485,6 @@ export default function LearningTracker() {
               </div>
             )}
 
-            {/* Other Category */}
             {activeCategory === 'other' && (
               <div className="bg-gradient-to-br from-slate-500/10 to-gray-500/10 backdrop-blur-xl border border-slate-500/20 rounded-2xl p-6">
                 <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
@@ -1550,7 +1516,6 @@ export default function LearningTracker() {
               </div>
             )}
 
-            {/* Daily Reflection - Always show at the end */}
             <div className="bg-gradient-to-br from-yellow-500/10 to-amber-500/10 backdrop-blur-xl border border-yellow-500/20 rounded-2xl p-6">
               <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
                 <Lightbulb className="w-6 h-6" />
@@ -1564,7 +1529,6 @@ export default function LearningTracker() {
               />
             </div>
 
-            {/* Save Button */}
             <button
               onClick={saveEntry}
               className="w-full bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 py-5 rounded-2xl font-black text-xl shadow-2xl transition-all transform hover:scale-105 flex items-center justify-center gap-3 text-white"
@@ -1576,7 +1540,6 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {/* History View */}
         {view === 'history' && (
           <div className="space-y-4">
             <div className="flex justify-between items-center mb-4">
@@ -1596,9 +1559,6 @@ export default function LearningTracker() {
                     Edit
                   </button>
                 </div>
-                {entry.content?.englishWords?.length > 0 && (
-                  <div className="text-gray-300 text-sm">🔤 {entry.content.englishWords.length} words learned</div>
-                )}
                 {entry.content?.dailyReflection && (
                   <p className="text-gray-400 text-sm mt-2 italic">"{entry.content.dailyReflection.substring(0, 100)}..."</p>
                 )}
@@ -1614,7 +1574,6 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {/* Stats View */}
         {view === 'stats' && (
           <div className="space-y-6">
             <h2 className="text-3xl font-black text-white mb-6">Performance Analytics</h2>
@@ -1632,16 +1591,13 @@ export default function LearningTracker() {
                 <div className="text-orange-100 font-semibold">Current Streak</div>
               </div>
               
-              {userInterests.includes('english') && (
-                <div className="bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl p-6">
-                  <Languages className="w-8 h-8 text-white/80 mb-2" />
-                  <div className="text-5xl font-black text-white">{stats.totalWords}</div>
-                  <div className="text-purple-100 font-semibold">Words Learned</div>
-                </div>
-              )}
+              <div className="bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl p-6">
+                <Award className="w-8 h-8 text-white/80 mb-2" />
+                <div className="text-5xl font-black text-white">{Object.keys(stats.interestStats).length}</div>
+                <div className="text-purple-100 font-semibold">Active Categories</div>
+              </div>
             </div>
 
-            {/* Interest-based stats */}
             {Object.keys(stats.interestStats).length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
                 {Object.entries(stats.interestStats).map(([category, data]) => {
@@ -1685,7 +1641,6 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {/* Submissions View (Admin Only) */}
         {view === 'submissions' && isAdmin && (
           <div className="space-y-4">
             <div className="flex items-center justify-between mb-6">
