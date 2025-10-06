@@ -29,9 +29,10 @@ export default function LearningTracker() {
   const [userInterests, setUserInterests] = useState([]);
   const [dailyChallenge, setDailyChallenge] = useState(null);
   const [completedChallenge, setCompletedChallenge] = useState(false);
-  const [activeCategory, setActiveCategory] = useState('coding');
+  const [activeCategory, setActiveCategory] = useState('');
   const [tempInterests, setTempInterests] = useState([]);
   const [showCreateChallenge, setShowCreateChallenge] = useState(false);
+  const [selectedLanguage, setSelectedLanguage] = useState('javascript');
   const [newChallenge, setNewChallenge] = useState({
     title: '',
     description: '',
@@ -72,6 +73,30 @@ export default function LearningTracker() {
       loadDailyChallenge();
     }
   }, [user]);
+
+  // Set first interest as active category when loaded
+  useEffect(() => {
+    if (userInterests.length > 0 && !activeCategory) {
+      const categoryMap = {
+        'python': 'coding',
+        'sql': 'coding',
+        'javascript': 'coding',
+        'data-analysis': 'coding',
+        'machine-learning': 'coding',
+        'english': 'english',
+        'articles': 'reading',
+        'books': 'reading',
+        'videos': 'videos',
+        'projects': 'projects',
+        'workflows': 'workflows',
+        'n8n': 'workflows',
+        'erp': 'workflows',
+        'bi': 'workflows'
+      };
+      const firstCategory = categoryMap[userInterests[0]] || userInterests[0];
+      setActiveCategory(firstCategory);
+    }
+  }, [userInterests, activeCategory]);
 
   // Load entry for selected date
   useEffect(() => {
@@ -170,6 +195,18 @@ export default function LearningTracker() {
   const loadSubmissions = async () => {
     const today = new Date().toISOString().split('T')[0];
     
+    const { data: challengesData } = await supabase
+      .from('daily_challenges')
+      .select('id')
+      .eq('date', today);
+    
+    if (!challengesData || challengesData.length === 0) {
+      setSubmissions([]);
+      return;
+    }
+    
+    const challengeIds = challengesData.map(c => c.id);
+    
     const { data } = await supabase
       .from('challenge_submissions')
       .select(`
@@ -177,7 +214,7 @@ export default function LearningTracker() {
         profiles!inner(email),
         daily_challenges!inner(date, title)
       `)
-      .eq('daily_challenges.date', today)
+      .in('challenge_id', challengeIds)
       .order('submitted_at', { ascending: false });
     
     setSubmissions(data || []);
@@ -291,7 +328,7 @@ export default function LearningTracker() {
   };
 
   const addCodingQuestion = () => {
-    const newQ = { question: '', code: '', explanation: '', language: 'javascript' };
+    const newQ = { question: '', code: '', explanation: '', language: selectedLanguage };
     const updated = { ...currentEntry };
     updated.categories.coding.questions.push(newQ);
     setCurrentEntry(updated);
@@ -370,7 +407,47 @@ export default function LearningTracker() {
       }
     }
     
-    return { total, totalWords, streak };
+    // Calculate interest-based stats
+    const interestStats = {};
+    const categoryMap = {
+      'python': 'coding',
+      'sql': 'coding',
+      'javascript': 'coding',
+      'data-analysis': 'coding',
+      'machine-learning': 'coding',
+      'articles': 'reading',
+      'books': 'reading',
+      'videos': 'videos',
+      'projects': 'projects',
+      'workflows': 'workflows',
+      'n8n': 'workflows',
+      'erp': 'workflows',
+      'bi': 'workflows'
+    };
+
+    userInterests.forEach(interest => {
+      const category = categoryMap[interest] || interest;
+      if (!interestStats[category]) {
+        interestStats[category] = { count: 0, label: interest };
+      }
+      
+      entries.forEach(entry => {
+        if (!entry.content?.categories) return;
+        
+        const cat = entry.content.categories[category];
+        if (!cat) return;
+        
+        if (category === 'coding' && cat.questions) {
+          interestStats[category].count += cat.questions.length;
+        } else if (category === 'reading') {
+          interestStats[category].count += (cat.articles?.length || 0) + (cat.books?.length || 0);
+        } else if (cat.items) {
+          interestStats[category].count += cat.items.length;
+        }
+      });
+    });
+    
+    return { total, totalWords, streak, interestStats };
   };
 
   const createChallenge = async () => {
@@ -1098,26 +1175,75 @@ export default function LearningTracker() {
 
             {/* Category Tabs */}
             <div className="flex gap-2 overflow-x-auto pb-2">
-              {[
-                { id: 'coding', label: '💻 Coding', icon: Code },
-                { id: 'reading', label: '📖 Reading', icon: BookOpen },
-                { id: 'videos', label: '🎥 Videos', icon: Play },
-                { id: 'projects', label: '🎯 Projects', icon: Target },
-                { id: 'workflows', label: '⚙️ Workflows', icon: Database },
-                { id: 'other', label: '📝 Other', icon: FileText }
-              ].map(cat => (
-                <button
-                  key={cat.id}
-                  onClick={() => setActiveCategory(cat.id)}
-                  className={`px-4 py-2 rounded-xl font-semibold whitespace-nowrap transition-all ${
-                    activeCategory === cat.id
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-white/5 text-gray-300 hover:bg-white/10'
-                  }`}
-                >
-                  {cat.label}
-                </button>
-              ))}
+              {userInterests.length > 0 ? (
+                (() => {
+                  const categoryMap = {
+                    'python': 'coding',
+                    'sql': 'coding',
+                    'javascript': 'coding',
+                    'data-analysis': 'coding',
+                    'machine-learning': 'coding',
+                    'articles': 'reading',
+                    'books': 'reading',
+                    'videos': 'videos',
+                    'projects': 'projects',
+                    'workflows': 'workflows',
+                    'n8n': 'workflows',
+                    'erp': 'workflows',
+                    'bi': 'workflows',
+                    'english': 'english'
+                  };
+                  
+                  const categories = [...new Set(userInterests.map(i => categoryMap[i] || i))];
+                  const iconMap = {
+                    'coding': { icon: Code, label: '💻 Coding' },
+                    'reading': { icon: BookOpen, label: '📖 Reading' },
+                    'videos': { icon: Play, label: '🎥 Videos' },
+                    'projects': { icon: Target, label: '🎯 Projects' },
+                    'workflows': { icon: Database, label: '⚙️ Workflows' },
+                    'english': { icon: Languages, label: '🔤 English' },
+                    'other': { icon: FileText, label: '📝 Other' }
+                  };
+
+                  return categories.map(cat => {
+                    const catInfo = iconMap[cat] || iconMap['other'];
+                    return (
+                      <button
+                        key={cat}
+                        onClick={() => setActiveCategory(cat)}
+                        className={`px-4 py-2 rounded-xl font-semibold whitespace-nowrap transition-all ${
+                          activeCategory === cat
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-white/5 text-gray-300 hover:bg-white/10'
+                        }`}
+                      >
+                        {catInfo.label}
+                      </button>
+                    );
+                  });
+                })()
+              ) : (
+                [
+                  { id: 'coding', label: '💻 Coding', icon: Code },
+                  { id: 'reading', label: '📖 Reading', icon: BookOpen },
+                  { id: 'videos', label: '🎥 Videos', icon: Play },
+                  { id: 'projects', label: '🎯 Projects', icon: Target },
+                  { id: 'workflows', label: '⚙️ Workflows', icon: Database },
+                  { id: 'other', label: '📝 Other', icon: FileText }
+                ].map(cat => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setActiveCategory(cat.id)}
+                    className={`px-4 py-2 rounded-xl font-semibold whitespace-nowrap transition-all ${
+                      activeCategory === cat.id
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-white/5 text-gray-300 hover:bg-white/10'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))
+              )}
             </div>
 
             {/* Coding Category */}
@@ -1127,6 +1253,35 @@ export default function LearningTracker() {
                   <Code className="w-6 h-6" />
                   Coding Practice
                 </h3>
+                
+                {/* Language Selector */}
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold text-emerald-300 mb-2">Select Language:</label>
+                  <select
+                    value={selectedLanguage}
+                    onChange={(e) => setSelectedLanguage(e.target.value)}
+                    className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ color: 'white' }}
+                  >
+                    {userInterests.some(i => ['python', 'data-analysis', 'machine-learning'].includes(i)) && 
+                      <option value="python" style={{ backgroundColor: '#1e293b', color: 'white' }}>🐍 Python</option>
+                    }
+                    {userInterests.includes('sql') && 
+                      <option value="sql" style={{ backgroundColor: '#1e293b', color: 'white' }}>🗄️ SQL</option>
+                    }
+                    {userInterests.includes('javascript') && 
+                      <option value="javascript" style={{ backgroundColor: '#1e293b', color: 'white' }}>⚡ JavaScript</option>
+                    }
+                    {/* Fallback if no specific language in interests */}
+                    {!userInterests.some(i => ['python', 'sql', 'javascript', 'data-analysis', 'machine-learning'].includes(i)) && (
+                      <>
+                        <option value="python" style={{ backgroundColor: '#1e293b', color: 'white' }}>🐍 Python</option>
+                        <option value="sql" style={{ backgroundColor: '#1e293b', color: 'white' }}>🗄️ SQL</option>
+                        <option value="javascript" style={{ backgroundColor: '#1e293b', color: 'white' }}>⚡ JavaScript</option>
+                      </>
+                    )}
+                  </select>
+                </div>
                 
                 {currentEntry.categories.coding.questions.map((q, i) => (
                   <div key={i} className="bg-white/5 rounded-xl p-4 mb-4 border border-white/10">
@@ -1381,44 +1536,46 @@ export default function LearningTracker() {
             )}
 
             {/* English Words */}
-            <div className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 backdrop-blur-xl border border-indigo-500/20 rounded-2xl p-6">
-              <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
-                <Languages className="w-6 h-6" />
-                English Vocabulary
-              </h3>
-              <div className="flex gap-2 mb-4">
-                <input
-                  type="text"
-                  placeholder="Word"
-                  value={newWord.word}
-                  onChange={(e) => setNewWord({ ...newWord, word: e.target.value })}
-                  onKeyPress={(e) => e.key === 'Enter' && addWord()}
-                  className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <input
-                  type="text"
-                  placeholder="Meaning"
-                  value={newWord.meaning}
-                  onChange={(e) => setNewWord({ ...newWord, meaning: e.target.value })}
-                  onKeyPress={(e) => e.key === 'Enter' && addWord()}
-                  className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <button onClick={addWord} className="bg-indigo-600 hover:bg-indigo-700 px-6 py-3 rounded-xl font-bold">Add</button>
-              </div>
-              <div className="space-y-2">
-                {currentEntry.englishWords.map((word, i) => (
-                  <div key={i} className="flex items-center justify-between bg-white/10 p-3 rounded-xl group hover:bg-white/15">
-                    <div className="flex items-center gap-3">
-                      <Star className="w-4 h-4 text-indigo-400" />
-                      <span className="font-bold text-indigo-300">{word.word}</span>
-                      <span className="text-gray-400">→</span>
-                      <span className="text-gray-200">{word.meaning}</span>
+            {(userInterests.includes('english') || activeCategory === 'english') && (
+              <div className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 backdrop-blur-xl border border-indigo-500/20 rounded-2xl p-6">
+                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
+                  <Languages className="w-6 h-6" />
+                  English Vocabulary
+                </h3>
+                <div className="flex gap-2 mb-4">
+                  <input
+                    type="text"
+                    placeholder="Word"
+                    value={newWord.word}
+                    onChange={(e) => setNewWord({ ...newWord, word: e.target.value })}
+                    onKeyPress={(e) => e.key === 'Enter' && addWord()}
+                    className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Meaning"
+                    value={newWord.meaning}
+                    onChange={(e) => setNewWord({ ...newWord, meaning: e.target.value })}
+                    onKeyPress={(e) => e.key === 'Enter' && addWord()}
+                    className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button onClick={addWord} className="bg-indigo-600 hover:bg-indigo-700 px-6 py-3 rounded-xl font-bold">Add</button>
+                </div>
+                <div className="space-y-2">
+                  {currentEntry.englishWords.map((word, i) => (
+                    <div key={i} className="flex items-center justify-between bg-white/10 p-3 rounded-xl group hover:bg-white/15">
+                      <div className="flex items-center gap-3">
+                        <Star className="w-4 h-4 text-indigo-400" />
+                        <span className="font-bold text-indigo-300">{word.word}</span>
+                        <span className="text-gray-400">→</span>
+                        <span className="text-gray-200">{word.meaning}</span>
+                      </div>
+                      <button onClick={() => removeWord(i)} className="text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 text-xl">×</button>
                     </div>
-                    <button onClick={() => removeWord(i)} className="text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 text-xl">×</button>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Daily Reflection */}
             <div className="bg-gradient-to-br from-yellow-500/10 to-amber-500/10 backdrop-blur-xl border border-yellow-500/20 rounded-2xl p-6">
@@ -1502,12 +1659,45 @@ export default function LearningTracker() {
                 <div className="text-orange-100 font-semibold">Current Streak</div>
               </div>
               
-              <div className="bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl p-6">
-                <Languages className="w-8 h-8 text-white/80 mb-2" />
-                <div className="text-5xl font-black text-white">{stats.totalWords}</div>
-                <div className="text-purple-100 font-semibold">Words Learned</div>
-              </div>
+              {userInterests.includes('english') && (
+                <div className="bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl p-6">
+                  <Languages className="w-8 h-8 text-white/80 mb-2" />
+                  <div className="text-5xl font-black text-white">{stats.totalWords}</div>
+                  <div className="text-purple-100 font-semibold">Words Learned</div>
+                </div>
+              )}
             </div>
+
+            {/* Interest-based stats */}
+            {Object.keys(stats.interestStats).length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                {Object.entries(stats.interestStats).map(([category, data]) => {
+                  const colors = {
+                    coding: 'from-emerald-600 to-green-600',
+                    reading: 'from-blue-600 to-cyan-600',
+                    videos: 'from-red-600 to-pink-600',
+                    projects: 'from-purple-600 to-pink-600',
+                    workflows: 'from-amber-600 to-orange-600'
+                  };
+                  const icons = {
+                    coding: Code,
+                    reading: BookOpen,
+                    videos: Play,
+                    projects: Target,
+                    workflows: Database
+                  };
+                  const IconComponent = icons[category] || Star;
+                  
+                  return (
+                    <div key={category} className={`bg-gradient-to-br ${colors[category] || 'from-gray-600 to-slate-600'} rounded-2xl p-6`}>
+                      <IconComponent className="w-8 h-8 text-white/80 mb-2" />
+                      <div className="text-5xl font-black text-white">{data.count}</div>
+                      <div className="text-white/90 font-semibold capitalize">{category} Items</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
               <h3 className="text-xl font-bold text-white mb-4">Your Interests</h3>
