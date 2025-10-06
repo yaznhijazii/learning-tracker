@@ -43,6 +43,8 @@ export default function LearningTracker() {
   const [challengeSubmission, setChallengeSubmission] = useState({ text: '', file: null });
   const [showSubmissionForm, setShowSubmissionForm] = useState(false);
   const [submissions, setSubmissions] = useState([]);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [signupSuccess, setSignupSuccess] = useState(false);
 
   // Admin email that can create challenges
   const ADMIN_EMAIL = 'yazanbrc@gmail.com';
@@ -166,9 +168,16 @@ export default function LearningTracker() {
   };
 
   const loadSubmissions = async () => {
+    const today = new Date().toISOString().split('T')[0];
+    
     const { data } = await supabase
       .from('challenge_submissions')
-      .select('*, profiles(email)')
+      .select(`
+        *,
+        profiles!inner(email),
+        daily_challenges!inner(date, title)
+      `)
+      .eq('daily_challenges.date', today)
       .order('submitted_at', { ascending: false });
     
     setSubmissions(data || []);
@@ -204,170 +213,21 @@ export default function LearningTracker() {
     }
   };
 
-  const createChallenge = async () => {
-    if (!isAdmin) {
-      alert('⛔ Only admin can create challenges');
-      return;
-    }
-
-    if (!newChallenge.title || !newChallenge.description) {
-      alert('❌ Please fill all fields');
-      return;
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-    
-    const { error } = await supabase
-      .from('daily_challenges')
-      .insert({
-        date: today,
-        title: newChallenge.title,
-        description: newChallenge.description,
-        category: newChallenge.category,
-        created_by: user.id
-      });
-
-    if (error) {
-      alert('❌ Error creating challenge: ' + error.message);
-    } else {
-      alert('✅ Challenge created successfully!');
-      setNewChallenge({ title: '', description: '', category: 'coding' });
-      setShowCreateChallenge(false);
-      loadDailyChallenge();
-    }
-  };
-
-  const updateChallenge = async () => {
-    if (!isAdmin || !editingChallenge) return;
-
-    console.log('Updating challenge:', editingChallenge);
-
-    const { data, error } = await supabase
-      .from('daily_challenges')
-      .update({
-        title: editingChallenge.title,
-        description: editingChallenge.description,
-        category: editingChallenge.category
-      })
-      .eq('id', editingChallenge.id)
-      .select();
-
-    if (error) {
-      console.error('Update error:', error);
-      alert('❌ Error updating challenge: ' + error.message);
-    } else {
-      console.log('Update success:', data);
-      // Update local state
-      const updatedChallenges = allChallenges.map(c => 
-        c.id === editingChallenge.id ? editingChallenge : c
-      );
-      setAllChallenges(updatedChallenges);
-      if (dailyChallenge?.id === editingChallenge.id) {
-        setDailyChallenge(editingChallenge);
-      }
-      
-      setEditingChallenge(null);
-      alert('✅ Challenge updated successfully!');
-    }
-  };
-
-  const deleteChallenge = async (challengeId) => {
-    if (!isAdmin) return;
-    if (!window.confirm('⚠️ هل أنت متأكد من حذف هذا التحدي؟ سيتم حذف كل البيانات المرتبطة به.')) return;
-
-    console.log('Attempting to delete challenge:', challengeId);
-
-    try {
-      // Step 1: Delete completions
-      console.log('Deleting completions...');
-      const { error: completionsError } = await supabase
-        .from('challenge_completions')
-        .delete()
-        .eq('challenge_id', challengeId);
-
-      if (completionsError) {
-        console.error('Completions delete error:', completionsError);
-        // Continue anyway
-      }
-
-      // Step 2: Delete submissions
-      console.log('Deleting submissions...');
-      const { error: submissionsError } = await supabase
-        .from('challenge_submissions')
-        .delete()
-        .eq('challenge_id', challengeId);
-
-      if (submissionsError) {
-        console.error('Submissions delete error:', submissionsError);
-        // Continue anyway
-      }
-
-      // Step 3: Delete the challenge
-      console.log('Deleting challenge...');
-      const { data, error } = await supabase
-        .from('daily_challenges')
-        .delete()
-        .eq('id', challengeId)
-        .select();
-
-      console.log('Delete result:', { data, error });
-
-      if (error) {
-        alert('❌ خطأ في الحذف: ' + error.message);
-        return;
-      }
-
-      // Update local state
-      const updatedChallenges = allChallenges.filter(c => c.id !== challengeId);
-      setAllChallenges(updatedChallenges);
-      setDailyChallenge(updatedChallenges[0] || null);
-      setCompletedChallenge(false);
-      
-      alert('✅ تم الحذف بنجاح!');
-      
-    } catch (err) {
-      console.error('Delete exception:', err);
-      alert('❌ خطأ: ' + err.message);
-    }
-  };
-
-  const submitChallengeWork = async () => {
-    if (!dailyChallenge || !challengeSubmission.text) {
-      alert('❌ Please write something about your work');
-      return;
-    }
-
-    const { error } = await supabase
-      .from('challenge_submissions')
-      .insert({
-        user_id: user.id,
-        challenge_id: dailyChallenge.id,
-        submission_text: challengeSubmission.text,
-        submitted_at: new Date().toISOString()
-      });
-
-    if (error) {
-      alert('❌ Error submitting: ' + error.message);
-    } else {
-      alert('✅ Submitted successfully!');
-      setChallengeSubmission({ text: '', file: null });
-      setShowSubmissionForm(false);
-      markChallengeComplete();
-    }
-  };
-
   const handleAuth = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
       if (authMode === 'signup') {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
         });
         if (error) throw error;
-        alert('✅ Check your email for the confirmation link!');
+        
+        setSignupSuccess(true);
+        setEmail('');
+        setPassword('');
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,
@@ -513,6 +373,198 @@ export default function LearningTracker() {
     return { total, totalWords, streak };
   };
 
+  const createChallenge = async () => {
+    if (!isAdmin) {
+      alert('⛔ Only admin can create challenges');
+      return;
+    }
+
+    if (!newChallenge.title || !newChallenge.description) {
+      alert('❌ Please fill all fields');
+      return;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    
+    const { error } = await supabase
+      .from('daily_challenges')
+      .insert({
+        date: today,
+        title: newChallenge.title,
+        description: newChallenge.description,
+        category: newChallenge.category,
+        created_by: user.id
+      });
+
+    if (error) {
+      alert('❌ Error creating challenge: ' + error.message);
+    } else {
+      alert('✅ Challenge created successfully!');
+      setNewChallenge({ title: '', description: '', category: 'coding' });
+      setShowCreateChallenge(false);
+      loadDailyChallenge();
+    }
+  };
+
+  const updateChallenge = async () => {
+    if (!isAdmin || !editingChallenge) return;
+
+    console.log('Updating challenge:', editingChallenge);
+
+    const { data, error } = await supabase
+      .from('daily_challenges')
+      .update({
+        title: editingChallenge.title,
+        description: editingChallenge.description,
+        category: editingChallenge.category
+      })
+      .eq('id', editingChallenge.id)
+      .select();
+
+    if (error) {
+      console.error('Update error:', error);
+      alert('❌ Error updating challenge: ' + error.message);
+    } else {
+      console.log('Update success:', data);
+      // Update local state
+      const updatedChallenges = allChallenges.map(c => 
+        c.id === editingChallenge.id ? editingChallenge : c
+      );
+      setAllChallenges(updatedChallenges);
+      if (dailyChallenge?.id === editingChallenge.id) {
+        setDailyChallenge(editingChallenge);
+      }
+      
+      setEditingChallenge(null);
+      alert('✅ Challenge updated successfully!');
+    }
+  };
+
+  const deleteChallenge = async (challengeId) => {
+    if (!isAdmin) return;
+    if (!window.confirm('⚠️ Are you sure you want to delete this challenge? All related data will be deleted.')) return;
+
+    console.log('Attempting to delete challenge:', challengeId);
+
+    try {
+      // Step 1: Delete completions
+      console.log('Deleting completions...');
+      const { error: completionsError } = await supabase
+        .from('challenge_completions')
+        .delete()
+        .eq('challenge_id', challengeId);
+
+      if (completionsError) {
+        console.error('Completions delete error:', completionsError);
+      }
+
+      // Step 2: Delete submissions
+      console.log('Deleting submissions...');
+      const { error: submissionsError } = await supabase
+        .from('challenge_submissions')
+        .delete()
+        .eq('challenge_id', challengeId);
+
+      if (submissionsError) {
+        console.error('Submissions delete error:', submissionsError);
+      }
+
+      // Step 3: Delete the challenge
+      console.log('Deleting challenge...');
+      const { data, error } = await supabase
+        .from('daily_challenges')
+        .delete()
+        .eq('id', challengeId)
+        .select();
+
+      console.log('Delete result:', { data, error });
+
+      if (error) {
+        alert('❌ Delete error: ' + error.message);
+        return;
+      }
+
+      // Update local state
+      const updatedChallenges = allChallenges.filter(c => c.id !== challengeId);
+      setAllChallenges(updatedChallenges);
+      setDailyChallenge(updatedChallenges[0] || null);
+      setCompletedChallenge(false);
+      
+      alert('✅ Successfully deleted!');
+      
+    } catch (err) {
+      console.error('Delete exception:', err);
+      alert('❌ Error: ' + err.message);
+    }
+  };
+
+  const submitChallengeWork = async () => {
+    if (!dailyChallenge) return;
+    
+    if (!challengeSubmission.text && !challengeSubmission.file) {
+      alert('❌ Please write something or upload a file');
+      return;
+    }
+
+    setUploadingFile(true);
+    
+    try {
+      let fileUrl = null;
+      
+      // Upload file if exists
+      if (challengeSubmission.file) {
+        const fileExt = challengeSubmission.file.name.split('.').pop();
+        const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+        
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('challenge-submissions')
+          .upload(fileName, challengeSubmission.file);
+
+        if (uploadError) throw uploadError;
+        
+        const { data: urlData } = supabase.storage
+          .from('challenge-submissions')
+          .getPublicUrl(fileName);
+        
+        fileUrl = urlData.publicUrl;
+      }
+
+      // Insert submission
+      const { error } = await supabase
+        .from('challenge_submissions')
+        .insert({
+          user_id: user.id,
+          challenge_id: dailyChallenge.id,
+          submission_text: challengeSubmission.text || '',
+          file_url: fileUrl,
+          submitted_at: new Date().toISOString()
+        });
+
+      if (error) throw error;
+
+      // Mark challenge as completed
+      await supabase
+        .from('challenge_completions')
+        .insert({
+          user_id: user.id,
+          challenge_id: dailyChallenge.id,
+          completed_at: new Date().toISOString()
+        });
+
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+      
+      setChallengeSubmission({ text: '', file: null });
+      setShowSubmissionForm(false);
+      setCompletedChallenge(true);
+      
+    } catch (error) {
+      alert('❌ Error: ' + error.message);
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
   // Login Screen
   if (loading) {
     return (
@@ -523,6 +575,36 @@ export default function LearningTracker() {
   }
 
   if (!user) {
+    if (signupSuccess) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 flex items-center justify-center p-4">
+          <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 max-w-md w-full shadow-2xl text-center">
+            <div className="bg-gradient-to-br from-green-500 to-emerald-600 p-6 rounded-2xl inline-block mb-6">
+              <CheckCircle2 className="w-16 h-16 text-white" />
+            </div>
+            <h1 className="text-3xl font-black text-white mb-4">Account Created! 🎉</h1>
+            <p className="text-gray-300 text-lg mb-6">
+              Please check your email to verify your account.
+            </p>
+            <div className="bg-yellow-600/20 border border-yellow-500/30 rounded-xl p-4 mb-6">
+              <p className="text-yellow-200 text-sm">
+                📧 Click the confirmation link in the email to activate your account
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                setSignupSuccess(false);
+                setAuthMode('login');
+              }}
+              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 py-3 rounded-xl font-bold text-white"
+            >
+              Back to Login
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 flex items-center justify-center p-4">
         <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-8 max-w-md w-full shadow-2xl">
@@ -772,18 +854,106 @@ export default function LearningTracker() {
         )}
 
         {/* All Challenges for Today */}
-        {allChallenges.length > 0 && (
+        {allChallenges.length > 0 && !isAdmin && (
           <div className="mb-6">
-            {isAdmin && allChallenges.length > 1 && (
-              <button
-                onClick={() => setShowAllChallenges(!showAllChallenges)}
-                className="mb-3 text-yellow-400 hover:text-yellow-300 text-sm font-semibold"
-              >
-                {showAllChallenges ? '▼' : '►'} {allChallenges.length} challenges for today
-              </button>
-            )}
+            {allChallenges.map((challenge, idx) => {
+              const isCompleted = completedChallenge && idx === 0;
+              
+              return (
+                <div key={challenge.id} className={`bg-gradient-to-r from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6 ${idx > 0 ? 'mt-4' : ''}`}>
+                  <div className="flex items-start justify-between gap-4 mb-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Trophy className="w-6 h-6 text-yellow-400" />
+                        <h3 className="text-xl font-bold text-white">Today's Challenge {allChallenges.length > 1 && `#${idx + 1}`}</h3>
+                        <span className="text-xs bg-yellow-600/40 px-2 py-1 rounded-full text-yellow-200">{challenge.category}</span>
+                      </div>
+                      <p className="text-lg text-gray-200 mb-2">{challenge.title}</p>
+                      <p className="text-sm text-gray-300">{challenge.description}</p>
+                    </div>
+                  </div>
 
-            {(showAllChallenges || allChallenges.length === 1) && allChallenges.map((challenge, idx) => (
+                  {isCompleted ? (
+                    <div className="bg-gradient-to-r from-green-600/30 to-emerald-600/30 border border-green-500/40 rounded-xl p-4">
+                      <div className="flex items-center gap-3 text-green-200">
+                        <CheckCircle2 className="w-6 h-6" />
+                        <span className="font-semibold">Completed! Great job! 🎉</span>
+                      </div>
+                    </div>
+                  ) : showSubmissionForm && idx === 0 ? (
+                    <div className="bg-white/10 rounded-xl p-4">
+                      <h4 className="text-white font-bold mb-3">Submit Your Work</h4>
+                      <textarea
+                        value={challengeSubmission.text}
+                        onChange={(e) => setChallengeSubmission({ ...challengeSubmission, text: e.target.value })}
+                        placeholder="Describe what you did, share links, code, or notes... (optional if uploading file)"
+                        className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white h-32 focus:outline-none focus:ring-2 focus:ring-yellow-500 mb-3"
+                      />
+                      
+                      <div className="mb-3">
+                        <label className="block text-sm font-semibold text-gray-300 mb-2">
+                          📎 Attach File (optional) - Images, PDFs, Code files, etc.
+                        </label>
+                        <input
+                          type="file"
+                          onChange={(e) => setChallengeSubmission({ ...challengeSubmission, file: e.target.files[0] })}
+                          className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white file:cursor-pointer hover:file:bg-indigo-700"
+                          accept="image/*,.pdf,.doc,.docx,.txt,.js,.py,.java,.cpp,.html,.css"
+                        />
+                        {challengeSubmission.file && (
+                          <p className="text-green-300 text-sm mt-2">✓ {challengeSubmission.file.name}</p>
+                        )}
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={submitChallengeWork}
+                          disabled={uploadingFile}
+                          className="flex-1 bg-green-600 hover:bg-green-700 px-6 py-3 rounded-xl font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {uploadingFile ? '⏳ Uploading...' : '✅ Submit'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowSubmissionForm(false);
+                            setChallengeSubmission({ text: '', file: null });
+                          }}
+                          className="bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-xl font-bold text-white"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setShowSubmissionForm(true)}
+                      className="w-full bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700 py-3 rounded-xl font-bold text-white"
+                    >
+                      📝 Submit Your Work
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Admin Challenge Management */}
+        {allChallenges.length > 0 && isAdmin && (
+          <div className="mb-6">
+            <div className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-6 mb-4">
+              <h3 className="text-xl font-bold text-white mb-2">📊 Today's Challenges Overview</h3>
+              <p className="text-gray-300 mb-4">{allChallenges.length} challenge(s) active • {submissions.length} submission(s) received</p>
+              
+              <button
+                onClick={() => setView('submissions')}
+                className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 px-6 py-3 rounded-xl font-bold text-white"
+              >
+                📬 View All Submissions ({submissions.length})
+              </button>
+            </div>
+
+            {allChallenges.map((challenge, idx) => (
               <div key={challenge.id} className={`bg-gradient-to-r from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6 ${idx > 0 ? 'mt-4' : ''}`}>
                 {editingChallenge?.id === challenge.id ? (
                   <div className="space-y-4">
@@ -823,65 +993,27 @@ export default function LearningTracker() {
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-2">
                           <Trophy className="w-6 h-6 text-yellow-400" />
-                          <h3 className="text-xl font-bold text-white">Today's Challenge {allChallenges.length > 1 && `#${idx + 1}`}</h3>
+                          <h3 className="text-xl font-bold text-white">Challenge #{idx + 1}</h3>
                           <span className="text-xs bg-yellow-600/40 px-2 py-1 rounded-full text-yellow-200">{challenge.category}</span>
                         </div>
                         <p className="text-lg text-gray-200 mb-2">{challenge.title}</p>
                         <p className="text-sm text-gray-300">{challenge.description}</p>
                       </div>
                       <div className="flex gap-2">
-                        {isAdmin && (
-                          <>
-                            <button
-                              onClick={() => setEditingChallenge(challenge)}
-                              className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl font-bold text-white text-sm"
-                            >
-                              ✏️ Edit
-                            </button>
-                            <button
-                              onClick={() => deleteChallenge(challenge.id)}
-                              className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-xl font-bold text-white text-sm"
-                            >
-                              🗑️
-                            </button>
-                          </>
-                        )}
-                        {!isAdmin && idx === 0 && (
-                          <button
-                            onClick={() => setShowSubmissionForm(!showSubmissionForm)}
-                            className="bg-yellow-600 hover:bg-yellow-700 px-6 py-3 rounded-xl font-bold text-white whitespace-nowrap"
-                          >
-                            📝 Submit Work
-                          </button>
-                        )}
+                        <button
+                          onClick={() => setEditingChallenge(challenge)}
+                          className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-xl font-bold text-white text-sm"
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button
+                          onClick={() => deleteChallenge(challenge.id)}
+                          className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-xl font-bold text-white text-sm"
+                        >
+                          🗑️
+                        </button>
                       </div>
                     </div>
-
-                    {showSubmissionForm && idx === 0 && !isAdmin && (
-                      <div className="mt-4 bg-white/10 rounded-xl p-4">
-                        <h4 className="text-white font-bold mb-3">Submit Your Work</h4>
-                        <textarea
-                          value={challengeSubmission.text}
-                          onChange={(e) => setChallengeSubmission({ ...challengeSubmission, text: e.target.value })}
-                          placeholder="Describe what you did, share links, code, or notes..."
-                          className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white h-32 focus:outline-none focus:ring-2 focus:ring-yellow-500 mb-3"
-                        />
-                        <div className="flex gap-2">
-                          <button
-                            onClick={submitChallengeWork}
-                            className="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-xl font-bold text-white"
-                          >
-                            ✅ Submit
-                          </button>
-                          <button
-                            onClick={() => setShowSubmissionForm(false)}
-                            className="bg-gray-600 hover:bg-gray-700 px-6 py-2 rounded-xl font-bold text-white"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
                   </>
                 )}
               </div>
@@ -889,7 +1021,23 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {dailyChallenge && !completedChallenge && (
+        {completedChallenge && dailyChallenge && (
+          <div className="bg-gradient-to-r from-green-600/20 to-emerald-600/20 backdrop-blur-xl border border-green-500/30 rounded-2xl p-4 mb-6">
+            <div className="flex items-center gap-3 text-green-200">
+              <CheckCircle2 className="w-6 h-6" />
+              <span className="font-semibold">Challenge completed! 🎉</span>
+            </div>
+          </div>
+        )}
+
+        {!dailyChallenge && !isAdmin && allChallenges.length === 0 && (
+          <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 mb-6 text-center">
+            <Clock className="w-12 h-12 text-gray-400 mx-auto mb-2" />
+            <p className="text-gray-300">No challenge for today yet. Check back later!</p>
+          </div>
+        )}
+
+        {dailyChallenge && !completedChallenge && !isAdmin && allChallenges.length === 0 && (
           <div className="bg-gradient-to-r from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6 mb-6">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
@@ -911,19 +1059,10 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {completedChallenge && dailyChallenge && (
-          <div className="bg-gradient-to-r from-green-600/20 to-emerald-600/20 backdrop-blur-xl border border-green-500/30 rounded-2xl p-4 mb-6">
-            <div className="flex items-center gap-3 text-green-200">
-              <CheckCircle2 className="w-6 h-6" />
-              <span className="font-semibold">Challenge completed! 🎉</span>
-            </div>
-          </div>
-        )}
-
         {/* Navigation */}
         <div className="flex gap-3 mb-6 overflow-x-auto pb-2">
           {[
-            { id: 'entry', icon: BookOpen, label: 'Today' },
+          { id: 'entry', icon: BookOpen, label: 'Today' },
             { id: 'history', icon: Calendar, label: 'History' },
             { id: 'stats', icon: BarChart3, label: 'Stats' },
             ...(isAdmin ? [{ id: 'submissions', icon: FileText, label: '📬 Submissions' }] : [])
@@ -1241,7 +1380,7 @@ export default function LearningTracker() {
               </div>
             )}
 
-            {/* English Words (Always visible) */}
+            {/* English Words */}
             <div className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 backdrop-blur-xl border border-indigo-500/20 rounded-2xl p-6">
               <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
                 <Languages className="w-6 h-6" />
@@ -1386,29 +1525,71 @@ export default function LearningTracker() {
         {/* Submissions View (Admin Only) */}
         {view === 'submissions' && isAdmin && (
           <div className="space-y-4">
-            <h2 className="text-3xl font-black text-white mb-6">📬 Challenge Submissions</h2>
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-3xl font-black text-white">📬 Today's Submissions</h2>
+              <button 
+                onClick={loadSubmissions}
+                className="bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-xl font-semibold text-white"
+              >
+                🔄 Refresh
+              </button>
+            </div>
             
             {submissions.length === 0 && (
               <div className="text-center py-20">
                 <FileText className="w-20 h-20 text-gray-600 mx-auto mb-4" />
-                <p className="text-gray-400 text-xl">No submissions yet</p>
+                <p className="text-gray-400 text-xl">No submissions yet for today</p>
               </div>
             )}
 
-            {submissions.map((sub, i) => (
-              <div key={i} className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6">
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <h3 className="text-lg font-bold text-indigo-300">{sub.profiles?.email || 'Unknown user'}</h3>
-                    <p className="text-sm text-gray-400">{new Date(sub.submitted_at).toLocaleString()}</p>
+            <div className="grid gap-4">
+              {submissions.map((sub, i) => (
+                <div key={i} className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 hover:bg-white/10 transition-all">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <User className="w-4 h-4 text-indigo-400" />
+                        <h3 className="text-lg font-bold text-indigo-300">{sub.profiles?.email || 'Unknown user'}</h3>
+                      </div>
+                      <p className="text-sm text-gray-400">
+                        {new Date(sub.submitted_at).toLocaleString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </p>
+                      {sub.daily_challenges?.title && (
+                        <p className="text-xs text-yellow-400 mt-1">Challenge: {sub.daily_challenges.title}</p>
+                      )}
+                    </div>
+                    <span className="text-xs bg-green-600/40 px-3 py-1 rounded-full text-green-200 font-semibold">✓ Submitted</span>
                   </div>
-                  <span className="text-xs bg-green-600/40 px-3 py-1 rounded-full text-green-200">Submitted</span>
+
+                  {sub.submission_text && (
+                    <div className="bg-white/10 rounded-xl p-4 mb-3">
+                      <p className="text-sm font-semibold text-gray-300 mb-2">📝 Text:</p>
+                      <p className="text-gray-200 whitespace-pre-wrap">{sub.submission_text}</p>
+                    </div>
+                  )}
+
+                  {sub.file_url && (
+                    <div className="bg-indigo-600/20 border border-indigo-500/30 rounded-xl p-4">
+                      <p className="text-sm font-semibold text-indigo-300 mb-2">📎 Attached File:</p>
+                      <a 
+                        href={sub.file_url} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 px-4 py-2 rounded-lg text-white font-semibold transition-all"
+                      >
+                        <Download className="w-4 h-4" />
+                        View/Download File
+                      </a>
+                    </div>
+                  )}
                 </div>
-                <div className="bg-white/10 rounded-xl p-4">
-                  <p className="text-gray-200 whitespace-pre-wrap">{sub.submission_text}</p>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
       </div>
