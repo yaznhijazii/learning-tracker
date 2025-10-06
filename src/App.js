@@ -291,7 +291,7 @@ export default function LearningTracker() {
   };
 
   const addCodingQuestion = () => {
-    const newQ = { question: '', code: '', explanation: '' };
+    const newQ = { question: '', code: '', explanation: '', language: 'javascript' };
     const updated = { ...currentEntry };
     updated.categories.coding.questions.push(newQ);
     setCurrentEntry(updated);
