@@ -187,12 +187,27 @@ export default function LearningTracker() {
       setCompletedChallenge(!!completionData);
     }
 
-    if (isAdmin) {
-      loadSubmissions();
+    // Load submissions for admin
+    if (isAdmin && data && data.length > 0) {
+      const challengeIds = data.map(c => c.id);
+      
+      const { data: submissionsData } = await supabase
+        .from('challenge_submissions')
+        .select(`
+          *,
+          profiles!inner(email),
+          daily_challenges!inner(date, title)
+        `)
+        .in('challenge_id', challengeIds)
+        .order('submitted_at', { ascending: false });
+      
+      setSubmissions(submissionsData || []);
     }
   };
 
   const loadSubmissions = async () => {
+    if (!isAdmin) return;
+    
     const today = new Date().toISOString().split('T')[0];
     
     const { data: challengesData } = await supabase
@@ -1535,49 +1550,7 @@ export default function LearningTracker() {
               </div>
             )}
 
-            {/* English Words */}
-            {(userInterests.includes('english') || activeCategory === 'english') && (
-              <div className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 backdrop-blur-xl border border-indigo-500/20 rounded-2xl p-6">
-                <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
-                  <Languages className="w-6 h-6" />
-                  English Vocabulary
-                </h3>
-                <div className="flex gap-2 mb-4">
-                  <input
-                    type="text"
-                    placeholder="Word"
-                    value={newWord.word}
-                    onChange={(e) => setNewWord({ ...newWord, word: e.target.value })}
-                    onKeyPress={(e) => e.key === 'Enter' && addWord()}
-                    className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Meaning"
-                    value={newWord.meaning}
-                    onChange={(e) => setNewWord({ ...newWord, meaning: e.target.value })}
-                    onKeyPress={(e) => e.key === 'Enter' && addWord()}
-                    className="flex-1 bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <button onClick={addWord} className="bg-indigo-600 hover:bg-indigo-700 px-6 py-3 rounded-xl font-bold">Add</button>
-                </div>
-                <div className="space-y-2">
-                  {currentEntry.englishWords.map((word, i) => (
-                    <div key={i} className="flex items-center justify-between bg-white/10 p-3 rounded-xl group hover:bg-white/15">
-                      <div className="flex items-center gap-3">
-                        <Star className="w-4 h-4 text-indigo-400" />
-                        <span className="font-bold text-indigo-300">{word.word}</span>
-                        <span className="text-gray-400">→</span>
-                        <span className="text-gray-200">{word.meaning}</span>
-                      </div>
-                      <button onClick={() => removeWord(i)} className="text-red-400 hover:text-red-300 opacity-0 group-hover:opacity-100 text-xl">×</button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Daily Reflection */}
+            {/* Daily Reflection - Always show at the end */}
             <div className="bg-gradient-to-br from-yellow-500/10 to-amber-500/10 backdrop-blur-xl border border-yellow-500/20 rounded-2xl p-6">
               <h3 className="text-2xl font-black mb-4 text-white flex items-center gap-2">
                 <Lightbulb className="w-6 h-6" />
