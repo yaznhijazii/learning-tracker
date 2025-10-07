@@ -46,6 +46,9 @@ export default function LearningTracker() {
   const [submissions, setSubmissions] = useState([]);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
+  const [mySubmissions, setMySubmissions] = useState([]);
+  const [editingSubmission, setEditingSubmission] = useState(null);
+  const [showMyHistory, setShowMyHistory] = useState(null); // null أو challenge.id
 
   const ADMIN_EMAIL = 'yazanbrc@gmail.com';
   const isAdmin = user?.email === ADMIN_EMAIL;
@@ -68,9 +71,16 @@ export default function LearningTracker() {
       loadEntries();
       loadUserProfile();
       loadDailyChallenge();
-      loadSubmissions(); // حمّل الـ submissions دايماً
+      loadMySubmissions(); // حمّل تسليماتي أول شي
     }
   }, [user]);
+
+  useEffect(() => {
+    // كل ما تتغير التسليمات، حمّل الـ submissions للأدمن
+    if (user && isAdmin) {
+      loadSubmissions();
+    }
+  }, [user, isAdmin]);
 
   useEffect(() => {
     if (userInterests.length > 0 && !activeCategory) {
@@ -184,6 +194,34 @@ export default function LearningTracker() {
 
     // حمّل الـ submissions دايماً مع التحديات
     await loadSubmissions();
+  };
+
+  const loadMySubmissions = async () => {
+    if (!user) return;
+    
+    console.log('🔍 Loading my submissions for user:', user.id);
+    
+    // جيب كل تسليماتي (مش بس اليوم)
+    const { data, error } = await supabase
+      .from('challenge_submissions')
+      .select(`
+        *,
+        daily_challenges (
+          id,
+          title,
+          date,
+          category
+        )
+      `)
+      .eq('user_id', user.id)
+      .order('submitted_at', { ascending: false });
+    
+    if (error) {
+      console.error('❌ Error loading my submissions:', error);
+    } else {
+      console.log('✅ My submissions loaded:', data);
+      setMySubmissions(data || []);
+    }
   };
 
   const loadSubmissions = async () => {
@@ -588,7 +626,7 @@ export default function LearningTracker() {
   };
 
   const submitChallengeWork = async () => {
-    if (!dailyChallenge) return;
+    if (!dailyChallenge && !editingSubmission) return;
     
     if (!challengeSubmission.text && !challengeSubmission.file) {
       alert('❌ Please write something or upload a file');
@@ -617,45 +655,189 @@ export default function LearningTracker() {
         fileUrl = urlData.publicUrl;
       }
 
-      const { data: submissionData, error: submissionError } = await supabase
-        .from('challenge_submissions')
-        .insert({
-          user_id: user.id,
-          challenge_id: dailyChallenge.id,
+      // إذا عم نعدّل على تسليم موجود
+      if (editingSubmission) {
+        console.log('✏️ Updating submission:', editingSubmission.id);
+        
+        const updateData = {
           submission_text: challengeSubmission.text || '',
-          file_url: fileUrl,
           submitted_at: new Date().toISOString()
-        })
-        .select();
+        };
+        
+        // بس إذا في ملف جديد، حدّث الـ file_url
+        if (fileUrl) {
+          updateData.file_url = fileUrl;
+        }
+        
+        const { error: updateError } = await supabase
+          .from('challenge_submissions')
+          .update(updateData)
+          .eq('id', editingSubmission.id)
+          .eq('user_id', user.id); // تأكد إنه تسليمي أنا
 
-      if (submissionError) {
-        console.error('Submission error:', submissionError);
-        throw submissionError;
+        if (updateError) {
+          console.error('❌ Update error:', updateError);
+          throw updateError;
+        }
+        
+        console.log('✅ Updated successfully');
+        alert('✅ Updated successfully!');
+        
+        // امسح الـ editing state
+        setEditingSubmission(null);
+        
+      } else {
+        // تسليم جديد
+        console.log('📝 Creating new submission for challenge:', dailyChallenge.id);
+        
+        const { data: submissionData, error: submissionError } = await supabase
+          .from('challenge_submissions')
+          .insert({
+            user_id: user.id,
+            challenge_id: dailyChallenge.id,
+            submission_text: challengeSubmission.text || '',
+            file_url: fileUrl,
+            submitted_at: new Date().toISOString()
+          })
+          .select();
+
+        if (submissionError) {
+          console.error('❌ Submission error:', submissionError);
+          throw submissionError;
+        }
+
+        console.log('✅ Submission created:', submissionData);
+
+        // سجّل إنه complete
+        const { error: completionError } = await supabase
+          .from('challenge_completions')
+          .upsert({
+            user_id: user.id,
+            challenge_id: dailyChallenge.id,
+            completed_at: new Date().toISOString()
+          }, {
+            onConflict: 'user_id,challenge_id'
+          });
+
+        if (completionError) {
+          console.log('⚠️ Completion error (might already exist):', completionError);
+        }
+
+        setCompletedChallenge(true);
+        alert('✅ Submitted successfully!');
       }
-
-      const { error: completionError } = await supabase
-        .from('challenge_completions')
-        .insert({
-          user_id: user.id,
-          challenge_id: dailyChallenge.id,
-          completed_at: new Date().toISOString()
-        });
 
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
       
+      // امسح الفورم
       setChallengeSubmission({ text: '', file: null });
       setShowSubmissionForm(false);
-      setCompletedChallenge(true);
+      setEditingSubmission(null); // مهم جداً!
       
-      // حمّل الـ submissions من جديد للجميع (الأدمن بشوفها لما يدخل)
-      await loadSubmissions();
+      // حدّث البيانات
+      await loadMySubmissions();
+      if (isAdmin) {
+        await loadSubmissions();
+      }
       
     } catch (error) {
-      console.error('Submit error:', error);
+      console.error('❌ Submit error:', error);
       alert('❌ Error: ' + error.message);
     } finally {
       setUploadingFile(false);
+    }
+  };
+
+  const editMySubmission = (submission) => {
+    console.log('🔧 Editing submission:', submission);
+    
+    // امسح أي submission form مفتوح
+    setShowSubmissionForm(false);
+    
+    // حدد الـ submission للتعديل
+    setEditingSubmission(submission);
+    
+    // املأ الفورم
+    setChallengeSubmission({
+      text: submission.submission_text || '',
+      file: null
+    });
+    
+    // أخفي الـ history
+    setShowMyHistory(null);
+    
+    // افتح الفورم
+    setTimeout(() => {
+      setShowSubmissionForm(true);
+    }, 100);
+    
+    // تأكد إنك على صفحة الـ challenges
+    setView('challenges');
+  };
+
+  const deleteMySubmission = async (submissionId) => {
+    if (!window.confirm('⚠️ Are you sure you want to delete this submission?')) return;
+
+    console.log('🗑️ Deleting submission:', submissionId);
+
+    try {
+      // جيب التسليم عشان نعرف الـ challenge_id
+      const submission = mySubmissions.find(s => s.id === submissionId);
+      console.log('Found submission:', submission);
+      
+      if (!submission) {
+        alert('❌ Submission not found');
+        return;
+      }
+
+      // أول شي احذف الـ completion إذا موجود
+      const { error: completionError } = await supabase
+        .from('challenge_completions')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('challenge_id', submission.challenge_id);
+      
+      if (completionError) {
+        console.log('⚠️ Completion delete error (might not exist):', completionError);
+      }
+
+      // بعدين احذف التسليم
+      const { error } = await supabase
+        .from('challenge_submissions')
+        .delete()
+        .eq('id', submissionId)
+        .eq('user_id', user.id);
+
+      if (error) {
+        console.error('❌ Delete error:', error);
+        throw error;
+      }
+
+      console.log('✅ Deleted successfully');
+      alert('✅ Deleted successfully!');
+      
+      // حدّث البيانات
+      await loadMySubmissions();
+      if (isAdmin) {
+        await loadSubmissions();
+      }
+      
+      // إذا كان هاد آخر تسليم للـ challenge الحالي، شيل علامة completed
+      const remainingForThisChallenge = mySubmissions.filter(s => 
+        s.id !== submissionId && 
+        s.challenge_id === submission.challenge_id
+      );
+      
+      console.log('Remaining submissions:', remainingForThisChallenge.length);
+      
+      if (remainingForThisChallenge.length === 0 && dailyChallenge?.id === submission.challenge_id) {
+        setCompletedChallenge(false);
+      }
+      
+    } catch (error) {
+      console.error('❌ Delete error:', error);
+      alert('❌ Error: ' + error.message);
     }
   };
 
@@ -944,87 +1126,251 @@ export default function LearningTracker() {
           </div>
         )}
 
-        {allChallenges.length > 0 && !isAdmin && (
+        {allChallenges.length > 0 && !isAdmin && view !== 'challenges' && (
           <div className="mb-6">
-            {allChallenges.map((challenge, idx) => {
-              const isCompleted = completedChallenge && idx === 0;
-              
-              return (
-                <div key={challenge.id} className={`bg-gradient-to-r from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6 ${idx > 0 ? 'mt-4' : ''}`}>
-                  <div className="flex items-start justify-between gap-4 mb-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Trophy className="w-6 h-6 text-yellow-400" />
-                        <h3 className="text-xl font-bold text-white">Today's Challenge {allChallenges.length > 1 && `#${idx + 1}`}</h3>
-                        <span className="text-xs bg-yellow-600/40 px-2 py-1 rounded-full text-yellow-200">{challenge.category}</span>
-                      </div>
-                      <p className="text-lg text-gray-200 mb-2">{challenge.title}</p>
-                      <p className="text-sm text-gray-300">{challenge.description}</p>
-                    </div>
+            <div className="bg-gradient-to-r from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Trophy className="w-8 h-8 text-yellow-400" />
+                  <div>
+                    <h3 className="text-xl font-bold text-white">Today's Challenges</h3>
+                    <p className="text-gray-300 text-sm">{allChallenges.length} challenge(s) available</p>
                   </div>
+                </div>
+                <button
+                  onClick={() => setView('challenges')}
+                  className="bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700 px-6 py-3 rounded-xl font-bold text-white"
+                >
+                  View Challenges →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
-                  {isCompleted ? (
-                    <div className="bg-gradient-to-r from-green-600/30 to-emerald-600/30 border border-green-500/40 rounded-xl p-4">
-                      <div className="flex items-center gap-3 text-green-200">
-                        <CheckCircle2 className="w-6 h-6" />
-                        <span className="font-semibold">Completed! Great job! 🎉</span>
-                      </div>
-                    </div>
-                  ) : showSubmissionForm && idx === 0 ? (
-                    <div className="bg-white/10 rounded-xl p-4">
-                      <h4 className="text-white font-bold mb-3">Submit Your Work</h4>
-                      <textarea
-                        value={challengeSubmission.text}
-                        onChange={(e) => setChallengeSubmission({ ...challengeSubmission, text: e.target.value })}
-                        placeholder="Describe what you did, share links, code, or notes... (optional if uploading file)"
-                        className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white h-32 focus:outline-none focus:ring-2 focus:ring-yellow-500 mb-3"
-                      />
-                      
-                      <div className="mb-3">
-                        <label className="block text-sm font-semibold text-gray-300 mb-2">
-                          📎 Attach File (optional) - Images, PDFs, Code files, etc.
-                        </label>
-                        <input
-                          type="file"
-                          onChange={(e) => setChallengeSubmission({ ...challengeSubmission, file: e.target.files[0] })}
-                          className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white file:cursor-pointer hover:file:bg-indigo-700"
-                          accept="image/*,.pdf,.doc,.docx,.txt,.js,.py,.java,.cpp,.html,.css"
-                        />
-                        {challengeSubmission.file && (
-                          <p className="text-green-300 text-sm mt-2">✓ {challengeSubmission.file.name}</p>
-                        )}
+        {view === 'challenges' && !isAdmin && (
+          <div className="mb-6">
+            <h2 className="text-3xl font-black text-white mb-6 flex items-center gap-3">
+              <Trophy className="w-10 h-10 text-yellow-400" />
+              Today's Challenges
+            </h2>
+            
+            {allChallenges.length === 0 ? (
+              <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-12 text-center">
+                <Clock className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-xl font-bold text-gray-300 mb-2">No Challenges Yet</h3>
+                <p className="text-gray-400">Check back later for today's challenges!</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {allChallenges.map((challenge, idx) => {
+                  const mySubmissionsForThisChallenge = mySubmissions.filter(s => s.challenge_id === challenge.id);
+                  const isCompleted = mySubmissionsForThisChallenge.length > 0;
+                  const isFirstChallenge = idx === 0;
+                  
+                  return (
+                    <div key={challenge.id} className="bg-gradient-to-r from-yellow-600/20 to-orange-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6">
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Trophy className="w-6 h-6 text-yellow-400" />
+                            <h3 className="text-xl font-bold text-white">
+                              {allChallenges.length > 1 ? `Challenge #${idx + 1}` : "Today's Challenge"}
+                            </h3>
+                            <span className="text-xs bg-yellow-600/40 px-2 py-1 rounded-full text-yellow-200">{challenge.category}</span>
+                          </div>
+                          <p className="text-lg text-gray-200 mb-2">{challenge.title}</p>
+                          <p className="text-sm text-gray-300">{challenge.description}</p>
+                        </div>
                       </div>
 
-                      <div className="flex gap-2">
-                        <button
-                          onClick={submitChallengeWork}
-                          disabled={uploadingFile}
-                          className="flex-1 bg-green-600 hover:bg-green-700 px-6 py-3 rounded-xl font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {uploadingFile ? '⏳ Uploading...' : '✅ Submit'}
-                        </button>
+                      {/* Submission Counter */}
+                      <div className="bg-indigo-600/20 border border-indigo-500/30 rounded-xl p-3 mb-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Award className="w-5 h-5 text-indigo-400" />
+                            <span className="text-white font-semibold">
+                              Your submissions: {mySubmissionsForThisChallenge.length}
+                            </span>
+                          </div>
+                          {mySubmissionsForThisChallenge.length > 0 && (
+                            <button
+                              onClick={() => setShowMyHistory(showMyHistory === challenge.id ? null : challenge.id)}
+                              className="bg-indigo-600 hover:bg-indigo-700 px-3 py-1 rounded-lg text-sm font-semibold text-white"
+                            >
+                              {showMyHistory === challenge.id ? 'Hide History' : '📜 View History'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* My Submission History */}
+                      {showMyHistory === challenge.id && (
+                        <div className="bg-white/10 rounded-xl p-4 mb-4">
+                          <h4 className="text-white font-bold mb-3 flex items-center gap-2">
+                            <Clock className="w-5 h-5" />
+                            Your Submission History for this Challenge
+                          </h4>
+                          <div className="space-y-3">
+                            {mySubmissionsForThisChallenge.map((sub) => (
+                              <div key={sub.id} className="bg-white/5 border border-white/10 rounded-lg p-3">
+                                <div className="flex justify-between items-start mb-2">
+                                  <span className="text-xs text-gray-400">
+                                    {new Date(sub.submitted_at).toLocaleString('en-US', {
+                                      year: 'numeric',
+                                      month: 'long',
+                                      day: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit'
+                                    })}
+                                  </span>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => editMySubmission(sub)}
+                                      className="bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-xs font-semibold text-white flex items-center gap-1"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                      Edit
+                                    </button>
+                                    <button
+                                      onClick={() => deleteMySubmission(sub.id)}
+                                      className="bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-xs font-semibold text-white"
+                                    >
+                                      🗑️ Delete
+                                    </button>
+                                  </div>
+                                </div>
+                                {sub.submission_text && (
+                                  <p className="text-gray-200 text-sm mb-2">
+                                    {sub.submission_text.length > 150 
+                                      ? sub.submission_text.substring(0, 150) + '...' 
+                                      : sub.submission_text}
+                                  </p>
+                                )}
+                                {sub.file_url && (
+                                  <a href={sub.file_url} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 text-xs flex items-center gap-1">
+                                    <Download className="w-3 h-3" />
+                                    View attached file
+                                  </a>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Submission Form or Status */}
+                      {isCompleted && !editingSubmission && !showSubmissionForm ? (
+                        <div className="bg-gradient-to-r from-green-600/30 to-emerald-600/30 border border-green-500/40 rounded-xl p-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3 text-green-200">
+                              <CheckCircle2 className="w-6 h-6" />
+                              <span className="font-semibold">Completed! Great job! 🎉</span>
+                            </div>
+                            <button
+                              onClick={() => {
+                                console.log('➕ Submit Again clicked');
+                                setShowSubmissionForm(true);
+                                setEditingSubmission(null);
+                                setChallengeSubmission({ text: '', file: null });
+                              }}
+                              className="bg-green-700 hover:bg-green-800 px-4 py-2 rounded-lg text-sm font-semibold text-white"
+                            >
+                              ➕ Submit Again
+                            </button>
+                          </div>
+                        </div>
+                      ) : (showSubmissionForm && (isFirstChallenge || editingSubmission?.challenge_id === challenge.id)) || (editingSubmission && editingSubmission.challenge_id === challenge.id) ? (
+                        <div className="bg-white/10 rounded-xl p-4">
+                          <h4 className="text-white font-bold mb-3 flex items-center gap-2">
+                            {editingSubmission ? (
+                              <>
+                                <Edit2 className="w-5 h-5" />
+                                Edit Submission
+                              </>
+                            ) : (
+                              <>
+                                ✨ Submit Your Work
+                              </>
+                            )}
+                          </h4>
+                          
+                          {editingSubmission && (
+                            <div className="bg-blue-600/20 border border-blue-500/30 rounded-lg p-3 mb-3">
+                              <p className="text-blue-200 text-sm">
+                                💡 You're editing your submission from {new Date(editingSubmission.submitted_at).toLocaleDateString()}
+                              </p>
+                            </div>
+                          )}
+                          
+                          <textarea
+                            value={challengeSubmission.text}
+                            onChange={(e) => setChallengeSubmission({ ...challengeSubmission, text: e.target.value })}
+                            placeholder="Describe what you did, share links, code, or notes..."
+                            className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white h-32 focus:outline-none focus:ring-2 focus:ring-yellow-500 mb-3"
+                          />
+                          
+                          <div className="mb-3">
+                            <label className="block text-sm font-semibold text-gray-300 mb-2">
+                              📎 Attach File (optional)
+                            </label>
+                            <input
+                              type="file"
+                              onChange={(e) => setChallengeSubmission({ ...challengeSubmission, file: e.target.files[0] })}
+                              className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white file:cursor-pointer hover:file:bg-indigo-700"
+                              accept="image/*,.pdf,.doc,.docx,.txt,.js,.py,.java,.cpp,.html,.css"
+                            />
+                            {challengeSubmission.file && (
+                              <p className="text-green-300 text-sm mt-2">✓ {challengeSubmission.file.name}</p>
+                            )}
+                            {editingSubmission?.file_url && !challengeSubmission.file && (
+                              <div className="mt-2">
+                                <p className="text-blue-300 text-sm mb-1">📎 Current file:</p>
+                                <a href={editingSubmission.file_url} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:text-indigo-300 text-xs">
+                                  View current file
+                                </a>
+                                <p className="text-gray-400 text-xs mt-1">(Upload a new file to replace it)</p>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex gap-2">
+                            <button
+                              onClick={submitChallengeWork}
+                              disabled={uploadingFile}
+                              className="flex-1 bg-green-600 hover:bg-green-700 px-6 py-3 rounded-xl font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {uploadingFile ? '⏳ Uploading...' : editingSubmission ? '💾 Save Changes' : '✅ Submit'}
+                            </button>
+                            <button
+                              onClick={() => {
+                                console.log('❌ Canceling submission form');
+                                setShowSubmissionForm(false);
+                                setChallengeSubmission({ text: '', file: null });
+                                setEditingSubmission(null);
+                              }}
+                              className="bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-xl font-bold text-white"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
                         <button
                           onClick={() => {
-                            setShowSubmissionForm(false);
-                            setChallengeSubmission({ text: '', file: null });
+                            setShowSubmissionForm(true);
+                            setEditingSubmission(null);
                           }}
-                          className="bg-gray-600 hover:bg-gray-700 px-6 py-3 rounded-xl font-bold text-white"
+                          className="w-full bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700 py-3 rounded-xl font-bold text-white"
                         >
-                          Cancel
+                          📝 Submit Your Work
                         </button>
-                      </div>
+                      )}
                     </div>
-                  ) : (
-                    <button
-                      onClick={() => setShowSubmissionForm(true)}
-                      className="w-full bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700 py-3 rounded-xl font-bold text-white"
-                    >
-                      📝 Submit Your Work
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -1131,6 +1477,7 @@ export default function LearningTracker() {
             { id: 'entry', icon: BookOpen, label: 'Today' },
             { id: 'history', icon: Calendar, label: 'History' },
             { id: 'stats', icon: BarChart3, label: 'Stats' },
+            { id: 'challenges', icon: Trophy, label: 'Challenges' },
             ...(isAdmin ? [{ id: 'submissions', icon: FileText, label: '📬 Submissions' }] : [])
           ].map(nav => (
             <button
@@ -1176,11 +1523,15 @@ export default function LearningTracker() {
                     'workflows': 'workflows',
                     'n8n': 'workflows',
                     'erp': 'workflows',
-                    'bi': 'workflows'
+                    'bi': 'workflows',
+                    'english': 'other' // أي حاجة ثانية تروح على Other
                   };
                   
-                  const categories = [...new Set(userInterests.map(i => categoryMap[i] || i))];
+                  // نجمع الـ categories ونتأكد إنه ما في تكرار
+                  // أي interest مش موجود بالـ map، يروح تلقائياً على 'other'
+                  const categories = [...new Set(userInterests.map(i => categoryMap[i] || 'other'))];
                   
+                  // Other أكيد موجودة هسا، بس نتأكد
                   if (!categories.includes('other')) {
                     categories.push('other');
                   }
@@ -1194,22 +1545,25 @@ export default function LearningTracker() {
                     'other': { icon: FileText, label: '📝 Other' }
                   };
 
-                  return categories.map(cat => {
-                    const catInfo = iconMap[cat] || iconMap['other'];
-                    return (
-                      <button
-                        key={cat}
-                        onClick={() => setActiveCategory(cat)}
-                        className={`px-4 py-2 rounded-xl font-semibold whitespace-nowrap transition-all ${
-                          activeCategory === cat
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-white/5 text-gray-300 hover:bg-white/10'
-                        }`}
-                      >
-                        {catInfo.label}
-                      </button>
-                    );
-                  });
+                  // نصفّي: نعرض بس الـ categories اللي إلها icon
+                  return categories
+                    .filter(cat => iconMap[cat]) // بس الـ categories المعروفة
+                    .map(cat => {
+                      const catInfo = iconMap[cat];
+                      return (
+                        <button
+                          key={cat}
+                          onClick={() => setActiveCategory(cat)}
+                          className={`px-4 py-2 rounded-xl font-semibold whitespace-nowrap transition-all ${
+                            activeCategory === cat
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-white/5 text-gray-300 hover:bg-white/10'
+                          }`}
+                        >
+                          {catInfo.label}
+                        </button>
+                      );
+                    });
                 })()
               ) : (
                 [
