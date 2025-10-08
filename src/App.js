@@ -779,19 +779,49 @@ export default function LearningTracker() {
   const deleteMySubmission = async (submissionId) => {
     if (!window.confirm('⚠️ Are you sure you want to delete this submission?')) return;
 
-    console.log('🗑️ Deleting submission:', submissionId);
+    console.log('🗑️ Starting delete for submission:', submissionId);
 
     try {
       // جيب التسليم عشان نعرف الـ challenge_id
       const submission = mySubmissions.find(s => s.id === submissionId);
-      console.log('Found submission:', submission);
+      console.log('📋 Found submission:', submission);
       
       if (!submission) {
-        alert('❌ Submission not found');
+        alert('❌ Submission not found in local data');
         return;
       }
 
-      // أول شي احذف الـ completion إذا موجود
+      // Method 1: احذف مباشرة بدون فحص الـ completion
+      console.log('🔄 Attempting direct delete...');
+      
+      const { data: deleteData, error: deleteError } = await supabase
+        .from('challenge_submissions')
+        .delete()
+        .eq('id', submissionId)
+        .eq('user_id', user.id)
+        .select();
+
+      console.log('Delete result:', { data: deleteData, error: deleteError });
+
+      if (deleteError) {
+        console.error('❌ Delete error:', deleteError);
+        
+        // طبع تفاصيل الخطأ
+        console.error('Error details:', {
+          message: deleteError.message,
+          code: deleteError.code,
+          details: deleteError.details,
+          hint: deleteError.hint
+        });
+        
+        alert(`❌ Delete failed: ${deleteError.message}\n\nCheck console for details. You might need to update RLS policies in Supabase.`);
+        return;
+      }
+
+      console.log('✅ Delete successful');
+      
+      // بعد الحذف، احذف الـ completion
+      console.log('🔄 Deleting completion...');
       const { error: completionError } = await supabase
         .from('challenge_completions')
         .delete()
@@ -799,25 +829,13 @@ export default function LearningTracker() {
         .eq('challenge_id', submission.challenge_id);
       
       if (completionError) {
-        console.log('⚠️ Completion delete error (might not exist):', completionError);
+        console.log('⚠️ Completion delete warning (might not exist):', completionError);
       }
 
-      // بعدين احذف التسليم
-      const { error } = await supabase
-        .from('challenge_submissions')
-        .delete()
-        .eq('id', submissionId)
-        .eq('user_id', user.id);
-
-      if (error) {
-        console.error('❌ Delete error:', error);
-        throw error;
-      }
-
-      console.log('✅ Deleted successfully');
       alert('✅ Deleted successfully!');
       
       // حدّث البيانات
+      console.log('🔄 Reloading data...');
       await loadMySubmissions();
       if (isAdmin) {
         await loadSubmissions();
@@ -829,15 +847,15 @@ export default function LearningTracker() {
         s.challenge_id === submission.challenge_id
       );
       
-      console.log('Remaining submissions:', remainingForThisChallenge.length);
+      console.log('📊 Remaining submissions for this challenge:', remainingForThisChallenge.length);
       
       if (remainingForThisChallenge.length === 0 && dailyChallenge?.id === submission.challenge_id) {
         setCompletedChallenge(false);
       }
       
     } catch (error) {
-      console.error('❌ Delete error:', error);
-      alert('❌ Error: ' + error.message);
+      console.error('❌ Unexpected error:', error);
+      alert('❌ Unexpected error: ' + error.message);
     }
   };
 
@@ -1120,6 +1138,76 @@ export default function LearningTracker() {
                   >
                     ✅ Create Challenge
                   </button>
+                </div>
+              </div>
+            )}
+            {/* Achievements Badge */}
+            {mySubmissions.length >= 5 && (
+              <div className="bg-gradient-to-br from-yellow-600/20 to-amber-600/20 backdrop-blur-xl border border-yellow-500/30 rounded-2xl p-6">
+                <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                  <Award className="w-6 h-6 text-yellow-400" />
+                  Achievements Unlocked 🎉
+                </h3>
+                
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {mySubmissions.length >= 5 && (
+                    <div className="bg-gradient-to-br from-green-600/30 to-emerald-600/30 border border-green-500/40 rounded-xl p-4 text-center">
+                      <div className="text-3xl mb-2">🌱</div>
+                      <div className="text-white font-bold text-sm">Beginner</div>
+                      <div className="text-green-300 text-xs">5+ submissions</div>
+                    </div>
+                  )}
+                  
+                  {mySubmissions.length >= 10 && (
+                    <div className="bg-gradient-to-br from-blue-600/30 to-cyan-600/30 border border-blue-500/40 rounded-xl p-4 text-center">
+                      <div className="text-3xl mb-2">⚡</div>
+                      <div className="text-white font-bold text-sm">Rising Star</div>
+                      <div className="text-blue-300 text-xs">10+ submissions</div>
+                    </div>
+                  )}
+                  
+                  {mySubmissions.length >= 20 && (
+                    <div className="bg-gradient-to-br from-purple-600/30 to-pink-600/30 border border-purple-500/40 rounded-xl p-4 text-center">
+                      <div className="text-3xl mb-2">🔥</div>
+                      <div className="text-white font-bold text-sm">On Fire</div>
+                      <div className="text-purple-300 text-xs">20+ submissions</div>
+                    </div>
+                  )}
+                  
+                  {mySubmissions.length >= 50 && (
+                    <div className="bg-gradient-to-br from-yellow-600/30 to-orange-600/30 border border-yellow-500/40 rounded-xl p-4 text-center">
+                      <div className="text-3xl mb-2">👑</div>
+                      <div className="text-white font-bold text-sm">Legend</div>
+                      <div className="text-yellow-300 text-xs">50+ submissions</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Empty State for first time */}
+            {mySubmissions.length === 0 && allChallenges.length === 0 && (
+              <div className="bg-gradient-to-br from-indigo-600/20 to-purple-600/20 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-12 text-center">
+                <div className="bg-gradient-to-br from-yellow-500 to-orange-600 p-6 rounded-full inline-block mb-6">
+                  <Trophy className="w-16 h-16 text-white" />
+                </div>
+                <h3 className="text-2xl font-bold text-white mb-3">Ready to Start Your Journey? 🚀</h3>
+                <p className="text-gray-300 mb-6 max-w-md mx-auto">
+                  Challenges will appear here. Complete them to track your progress, earn achievements, and level up your skills!
+                </p>
+                <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto">
+                  <div className="bg-white/5 rounded-xl p-4">
+                    <div className="text-3xl mb-2">📊</div>
+                    <div className="text-white font-semibold text-sm">Track Progress</div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-4">
+                    <div className="text-3xl mb-2">🏆</div>
+                    <div className="text-white font-semibold text-sm">Earn Badges</div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-4">
+                    <div className="text-3xl mb-2">💪</div>
+                    <div className="text-white font-semibold text-sm">Level Up</div>
+                  </div>
                 </div>
               </div>
             )}
